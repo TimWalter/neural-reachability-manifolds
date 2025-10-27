@@ -1,0 +1,12 @@
+uv.lock
+
+/data
+/trained_models
+/wandb
+
+__pycache__/
+*.pyc
+
+.idea
+
+trace.json
