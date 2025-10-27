@@ -9,7 +9,7 @@ from torch import Tensor
 from tqdm import tqdm
 from pathlib import Path
 from model import Model
-from data_generation.dataset import Dataset, Dummyset
+from data_creation.dataset import Dataset, Dummyset
 from torcheval.metrics import BinaryConfusionMatrix, R2Score
 
 

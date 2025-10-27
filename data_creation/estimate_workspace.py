@@ -1,11 +1,12 @@
 from pathlib import Path
+from typing import Union
 
 import torch
 from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, jaxtyped, Int
-from data_generation.conversion import quaternion_to_rotation_matrix, rotation_matrix_to_axis_angle
-from data_generation.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
+from data_creation.conversion import quaternion_to_rotation_matrix, rotation_matrix_to_axis_angle
+from data_creation.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
 from autotune_batch_size import get_batch_size
 
 R3_CELLS = torch.load(Path(__file__).parent / "r3_cells.pt", map_location="cpu")
@@ -22,6 +23,9 @@ SO3_CELL_LOOKUP = SO3_CELL_LOOKUP.flatten()
 N_DIV_R3 = R3_CELLS.shape[0]
 N_DIV_SO3 = SO3_CELLS.shape[0]
 LINK_RADIUS = 0.025
+MIN_DISTANCE_R3 = 2.0 / R3_EDGE_LEN
+MIN_DISTANCE_SO3 = (2 * torch.pi) / SO3_EDGE_LEN
+
 
 @jaxtyped(typechecker=beartype)
 def unique_poses(poses: Float[Tensor, "batch_dim 4 4"],
@@ -61,6 +65,7 @@ def unique_poses(poses: Float[Tensor, "batch_dim 4 4"],
 
     return poses, manip_idx, joints, cell_indices
 
+
 @jaxtyped(typechecker=beartype)
 def r3_indices(positions: Float[Tensor, "batch_dim 3"]) -> Int[Tensor, "batch_dim"]:
     """
@@ -73,9 +78,10 @@ def r3_indices(positions: Float[Tensor, "batch_dim 3"]) -> Int[Tensor, "batch_di
         R3 cell indices
     """
     indices = torch.floor((positions + 1) / 2 * R3_EDGE_LEN).to(torch.int32)
-    indices = torch.clamp(indices, 0, R3_EDGE_LEN - 1) # Against numerical instability
+    indices = torch.clamp(indices, 0, R3_EDGE_LEN - 1)  # Against numerical instability
     linear = indices[:, 0] * (R3_EDGE_LEN * R3_EDGE_LEN) + indices[:, 1] * R3_EDGE_LEN + indices[:, 2]
     return R3_CELL_LOOKUP[linear]
+
 
 @jaxtyped(typechecker=beartype)
 def so3_indices(orientations: Float[Tensor, "batch_dim 3 3"]) -> Int[Tensor, "batch_dim"]:
@@ -97,6 +103,7 @@ def so3_indices(orientations: Float[Tensor, "batch_dim 3 3"]) -> Int[Tensor, "ba
     linear = indices[:, 0] * (SO3_EDGE_LEN * SO3_EDGE_LEN) + indices[:, 1] * SO3_EDGE_LEN + indices[:, 2]
     return SO3_CELL_LOOKUP[linear]
 
+
 @jaxtyped(typechecker=beartype)
 def get_cell_indices(poses: Float[Tensor, "batch_dim 4 4"]) -> Int[Tensor, "batch_dim"]:
     """
@@ -111,6 +118,7 @@ def get_cell_indices(poses: Float[Tensor, "batch_dim 4 4"]) -> Int[Tensor, "batc
     so3_index = so3_indices(poses[:, :3, :3])
     se3_index = r3_index * N_DIV_SO3 + so3_index
     return se3_index
+
 
 @jaxtyped(typechecker=beartype)
 def sample_joints(mdh: Float[Tensor, "dofp1 3"], batch_size: int,
@@ -145,9 +153,17 @@ def sample_joints(mdh: Float[Tensor, "dofp1 3"], batch_size: int,
 
     return torch.cat([joints, torch.zeros(batch_size, 1).to(mdh.device)], dim=1)
 
+
 @jaxtyped(typechecker=beartype)
 def estimate_workspace(mdh: Float[Tensor, "dofp1 3"], full_poses: bool = False) \
-        -> tuple[Tensor, Tensor, Tensor]:
+        -> tuple[
+            Union[
+                Float[Tensor, "n_cells 4 4"],
+                Float[Tensor, "n_cells 9"]
+            ],
+            Float[Tensor, "n_cells"],
+            Float[Tensor, "n_cells dofp1"]
+        ]:
     """
     Sample the robot's workspace and return poses and manipulability indices.
 
@@ -161,6 +177,10 @@ def estimate_workspace(mdh: Float[Tensor, "dofp1 3"], full_poses: bool = False) 
     poses = torch.eye(4, device="cpu").repeat(N_DIV_R3 * N_DIV_SO3, 1, 1)
     poses[:, :3, 3] = R3_CELLS.repeat_interleave(N_DIV_SO3, dim=0)
     poses[:, :3, :3] = SO3_CELLS_MAT.repeat(N_DIV_R3, 1, 1)
+    # Ensure diverse unreachable poses
+    poses[:, :3, 3] += 0.1 * torch.randn(N_DIV_R3 * N_DIV_SO3, 3) * MIN_DISTANCE_R3
+    poses[:, :3, :3] += 0.1 * torch.randn(N_DIV_R3 * N_DIV_SO3, 3, 3) * MIN_DISTANCE_SO3
+
     manip_idx = -torch.ones(N_DIV_R3 * N_DIV_SO3, device="cpu")
     joints = torch.zeros(N_DIV_R3 * N_DIV_SO3, mdh.shape[0], device="cpu")
 

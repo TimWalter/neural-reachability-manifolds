@@ -30,7 +30,7 @@ if __name__ == "__main__":
     study = optuna.create_study(direction="maximize",
                                 sampler=optuna.samplers.TPESampler(),
                                 pruner=optuna.pruners.HyperbandPruner(),
-                                storage="sqlite:///nf_capa.sqlite3",
+                                storage="sqlite:///hyperparameter.sqlite3",
                                 study_name=args.model_type)
 
     study.optimize(objective, n_trials=50, n_jobs=1)

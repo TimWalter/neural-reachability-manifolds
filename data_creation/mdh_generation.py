@@ -4,7 +4,7 @@ from jaxtyping import Float, Int, Bool, jaxtyped
 from beartype import beartype
 
 
-from data_generation.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
+from create_data.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
 
 
 def generate_eaik_conform_mdhs(num_robots: int, robot_class: int) -> Float[Tensor, "num_robots dof 3"]:

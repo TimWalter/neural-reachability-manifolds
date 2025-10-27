@@ -1,7 +1,7 @@
 import argparse
 import torch
 from model import Model
-from data_generation.dataset import Dataset
+from data_creation.dataset import Dataset
 from tqdm import tqdm
 from pathlib import Path
 import json
