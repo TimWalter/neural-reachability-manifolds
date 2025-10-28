@@ -3,8 +3,7 @@ from torch import Tensor
 from jaxtyping import Float, Int, Bool, jaxtyped
 from beartype import beartype
 
-
-from create_data.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
+from data_sampling.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
 
 
 def generate_eaik_conform_mdhs(num_robots: int, robot_class: int) -> Float[Tensor, "num_robots dof 3"]:
@@ -66,6 +65,7 @@ def generate_eaik_conform_mdhs(num_robots: int, robot_class: int) -> Float[Tenso
 
     # return normalise_mdh(mdh)
 
+
 @jaxtyped(typechecker=beartype)
 def _sample_link_types(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof+1}"]:
     """
@@ -83,6 +83,7 @@ def _sample_link_types(batch_size: int, dof: int) -> Int[Tensor, "batch_size {do
     link_types = torch.randint(0, 3, size=(batch_size, dof + 1))
     return link_types
 
+
 @jaxtyped(typechecker=beartype)
 def _reject_link_types(link_types: Int[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "batch_size"]:
     """
@@ -97,6 +98,7 @@ def _reject_link_types(link_types: Int[Tensor, "batch_size dofp1"]) -> Bool[Tens
     """
     rejected = ((link_types[:, :-2] == 1) & (link_types[:, 1:-1] == 1) & (link_types[:, 2:] == 1)).any(dim=1)
     return rejected
+
 
 @jaxtyped(typechecker=beartype)
 def _sample_alphas(link_types: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor, "batch_size dofp1"]:
@@ -118,6 +120,7 @@ def _sample_alphas(link_types: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor,
 
     return alphas
 
+
 @jaxtyped(typechecker=beartype)
 def _reject_alphas(alphas: Float[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "batch_size"]:
     """
@@ -132,6 +135,7 @@ def _reject_alphas(alphas: Float[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "b
     """
     rejected = ((alphas[:, :-2] == 0) & (alphas[:, 1:-1] == 0) & (alphas[:, 2:] == 0)).any(dim=1)
     return rejected
+
 
 @jaxtyped(typechecker=beartype)
 def _sample_link_lengths(link_types: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor, "batch_size dofp1 2"]:
@@ -156,6 +160,7 @@ def _sample_link_lengths(link_types: Int[Tensor, "batch_size dofp1"]) -> Float[T
     link_lengths[..., 1][link_types == 2] = 0
     return link_lengths
 
+
 @jaxtyped(typechecker=beartype)
 def _reject_link_lengths(link_lengths: Float[Tensor, "batch_size dofp1 2"]) -> Bool[Tensor, "batch_size"]:
     """
@@ -169,6 +174,7 @@ def _reject_link_lengths(link_lengths: Float[Tensor, "batch_size dofp1 2"]) -> B
     """
     rejected = ((link_lengths.abs() < 0.05) & (link_lengths != 0)).any(dim=(1, 2))
     return rejected
+
 
 @jaxtyped(typechecker=beartype)
 def _sample_mdh(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1} 3"]:
@@ -199,6 +205,7 @@ def _sample_mdh(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1} 
 
     return torch.cat([alphas.unsqueeze(-1), link_lengths], dim=2)
 
+
 @jaxtyped(typechecker=beartype)
 def _reject_mdh(mdhs: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batch_size"]:
     """
@@ -220,6 +227,7 @@ def _reject_mdh(mdhs: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batc
     rejected |= (yoshikawa_manipulability(jacobian) < 1e-4).all(dim=1)
 
     return rejected.cpu()
+
 
 @jaxtyped(typechecker=beartype)
 def sample_mdh(num_robots: int, dof: int) -> Float[Tensor, "num_robots {dof+1} 3"]:

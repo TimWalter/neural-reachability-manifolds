@@ -1,37 +1,21 @@
-from pathlib import Path
 from typing import Union
 
 import torch
 from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, jaxtyped, Int
-from data_creation.conversion import quaternion_to_rotation_matrix, rotation_matrix_to_axis_angle
-from data_creation.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
+
 from autotune_batch_size import get_batch_size
-
-R3_CELLS = torch.load(Path(__file__).parent / "r3_cells.pt", map_location="cpu")
-R3_CELL_LOOKUP = torch.load(Path(__file__).parent / "r3_cell_lookup.pt", map_location="cuda")
-R3_EDGE_LEN = R3_CELL_LOOKUP.shape[0]
-R3_CELL_LOOKUP = R3_CELL_LOOKUP.flatten()
-
-SO3_CELLS = torch.load(Path(__file__).parent / "so3_cells.pt", map_location="cpu")
-SO3_CELLS_MAT = quaternion_to_rotation_matrix(SO3_CELLS)
-SO3_CELL_LOOKUP = torch.load(Path(__file__).parent / "so3_cell_lookup.pt", map_location="cuda")
-SO3_EDGE_LEN = SO3_CELL_LOOKUP.shape[0]
-SO3_CELL_LOOKUP = SO3_CELL_LOOKUP.flatten()
-
-N_DIV_R3 = R3_CELLS.shape[0]
-N_DIV_SO3 = SO3_CELLS.shape[0]
-LINK_RADIUS = 0.025
-MIN_DISTANCE_R3 = 2.0 / R3_EDGE_LEN
-MIN_DISTANCE_SO3 = (2 * torch.pi) / SO3_EDGE_LEN
+from data_sampling.robotics import LINK_RADIUS, forward_kinematics, geometric_jacobian, yoshikawa_manipulability, \
+    collision_check
+from data_sampling.se3_cells import SE3_CELLS, N_CELLS, R3_LOOKUP_MIN_DISTANCE, SO3_LOOKUP_MIN_DISTANCE, se3_indices
 
 
 @jaxtyped(typechecker=beartype)
-def unique_poses(poses: Float[Tensor, "batch_dim 4 4"],
-                 manip_idx: Float[Tensor, "batch_dim"],
-                 joints: Float[Tensor, "batch_dim dofp1"],
-                 cell_indices: Int[Tensor, "batch_dim"]) \
+def unique_poses(poses: Float[Tensor, "batch 4 4"],
+                 manip_idx: Float[Tensor, "batch"],
+                 joints: Float[Tensor, "batch dofp1"],
+                 cell_indices: Int[Tensor, "batch"]) \
         -> tuple[
             Float[Tensor, "n_unique 4 4"],
             Float[Tensor, "n_unique"],
@@ -64,60 +48,6 @@ def unique_poses(poses: Float[Tensor, "batch_dim 4 4"],
     joints = joints[unique_indices]
 
     return poses, manip_idx, joints, cell_indices
-
-
-@jaxtyped(typechecker=beartype)
-def r3_indices(positions: Float[Tensor, "batch_dim 3"]) -> Int[Tensor, "batch_dim"]:
-    """
-    Get R3 cell indices for given positions.
-
-    Args:
-        positions: Positions in R3
-
-    Returns:
-        R3 cell indices
-    """
-    indices = torch.floor((positions + 1) / 2 * R3_EDGE_LEN).to(torch.int32)
-    indices = torch.clamp(indices, 0, R3_EDGE_LEN - 1)  # Against numerical instability
-    linear = indices[:, 0] * (R3_EDGE_LEN * R3_EDGE_LEN) + indices[:, 1] * R3_EDGE_LEN + indices[:, 2]
-    return R3_CELL_LOOKUP[linear]
-
-
-@jaxtyped(typechecker=beartype)
-def so3_indices(orientations: Float[Tensor, "batch_dim 3 3"]) -> Int[Tensor, "batch_dim"]:
-    """
-    Get SO3 cell indices for given orientations.
-
-    Args:
-        orientations: Orientations in SO3
-
-    Returns:
-        SO3 cell indices
-    """
-    try:
-        rotation_vector = rotation_matrix_to_axis_angle(orientations)
-    except RuntimeError:
-        print(orientations)
-    indices = torch.floor((rotation_vector + torch.pi) / (2 * torch.pi) * SO3_EDGE_LEN).to(torch.int32)
-    indices = torch.clamp(indices, 0, SO3_EDGE_LEN - 1)  # Against numerical instability
-    linear = indices[:, 0] * (SO3_EDGE_LEN * SO3_EDGE_LEN) + indices[:, 1] * SO3_EDGE_LEN + indices[:, 2]
-    return SO3_CELL_LOOKUP[linear]
-
-
-@jaxtyped(typechecker=beartype)
-def get_cell_indices(poses: Float[Tensor, "batch_dim 4 4"]) -> Int[Tensor, "batch_dim"]:
-    """
-    Get combined R3 and SO3 cell indices for given poses.
-
-    Args:
-        poses: Poses in SE(3)
-    Returns:
-        SE(3) cell indices
-    """
-    r3_index = r3_indices(poses[:, :3, 3])
-    so3_index = so3_indices(poses[:, :3, :3])
-    se3_index = r3_index * N_DIV_SO3 + so3_index
-    return se3_index
 
 
 @jaxtyped(typechecker=beartype)
@@ -174,15 +104,13 @@ def estimate_workspace(mdh: Float[Tensor, "dofp1 3"], full_poses: bool = False) 
     Returns:
         Sampled poses and corresponding manipulability indices and joints
     """
-    poses = torch.eye(4, device="cpu").repeat(N_DIV_R3 * N_DIV_SO3, 1, 1)
-    poses[:, :3, 3] = R3_CELLS.repeat_interleave(N_DIV_SO3, dim=0)
-    poses[:, :3, :3] = SO3_CELLS_MAT.repeat(N_DIV_R3, 1, 1)
+    poses = SE3_CELLS
     # Ensure diverse unreachable poses
-    poses[:, :3, 3] += 0.1 * torch.randn(N_DIV_R3 * N_DIV_SO3, 3) * MIN_DISTANCE_R3
-    poses[:, :3, :3] += 0.1 * torch.randn(N_DIV_R3 * N_DIV_SO3, 3, 3) * MIN_DISTANCE_SO3
+    poses[:, :3, 3] += torch.clamp(torch.randn_like(poses[:, :3, 3]) / 3, -1, 1) * R3_LOOKUP_MIN_DISTANCE
+    poses[:, :3, :3] += torch.clamp(torch.randn_like(poses[:, :3, :3]) / 3, -1, 1) * SO3_LOOKUP_MIN_DISTANCE
 
-    manip_idx = -torch.ones(N_DIV_R3 * N_DIV_SO3, device="cpu")
-    joints = torch.zeros(N_DIV_R3 * N_DIV_SO3, mdh.shape[0], device="cpu")
+    manip_idx = -torch.ones(N_CELLS, device="cpu")
+    joints = torch.zeros(N_CELLS, mdh.shape[0], device="cpu")
 
     def workload(batch_size: int, mdh: Float[Tensor, "dof 3"], link_radius: float) \
             -> tuple[
@@ -200,7 +128,7 @@ def estimate_workspace(mdh: Float[Tensor, "dofp1 3"], full_poses: bool = False) 
         jacobian = geometric_jacobian(batch_poses)
         batch_manip_idx = yoshikawa_manipulability(jacobian)
         batch_poses = batch_poses[:, -1, :, :]
-        batch_cell_indices = get_cell_indices(batch_poses)
+        batch_cell_indices = se3_indices(batch_poses)
         batch_poses, batch_manip_idx, batch_joints, batch_cell_indices = unique_poses(batch_poses, batch_manip_idx,
                                                                                       batch_joints,
                                                                                       batch_cell_indices)
@@ -210,7 +138,7 @@ def estimate_workspace(mdh: Float[Tensor, "dofp1 3"], full_poses: bool = False) 
     args = (mdh, LINK_RADIUS)
     batch_size = get_batch_size(mdh.device, workload, args)
 
-    threshold = int(min(batch_size, N_DIV_R3 * N_DIV_SO3) * 1e-3)
+    threshold = int(min(batch_size, N_CELLS) * 1e-3)
     newly_filled_cells = threshold + 1  # just to get the loop going
     while newly_filled_cells > threshold:
         batch_poses, batch_manip_idx, batch_cell_indices, batch_joints = workload(batch_size, *args)

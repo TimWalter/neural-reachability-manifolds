@@ -2,10 +2,11 @@ import math
 
 import torch
 from torch import Tensor
-from jaxtyping import Int, Float
+from beartype import beartype
+from jaxtyping import Int, Float, jaxtyped
 
-
-def index_to_r3(idx: Int[Tensor, "batch_dim 3"], n_div: int) -> Float[Tensor, "batch_dim 3"]:
+@jaxtyped(typechecker=beartype)
+def index_to_r3(idx: Int[Tensor, "*batch 3"], n_div: int) -> Float[Tensor, "*batch 3"]:
     """
     Convert cell index to the center of a cube cell in [-1, 1]^3.
 
@@ -18,7 +19,7 @@ def index_to_r3(idx: Int[Tensor, "batch_dim 3"], n_div: int) -> Float[Tensor, "b
     """
     return ((idx + 0.5) / n_div) * 2.0 - 1.0
 
-
+@jaxtyped(typechecker=beartype)
 def euclidean_distance(x1: Float[Tensor, "batch_dim1 3"],
                        x2: Float[Tensor, "batch_dim2 3"]) -> Float[Tensor, "batch_dim1 batch_dim2"]:
     """

@@ -9,9 +9,8 @@ from torch import Tensor
 from tqdm import tqdm
 from pathlib import Path
 from model import Model
-from data_creation.dataset import Dataset, Dummyset
+from data_sampling.dataset import Dataset
 from torcheval.metrics import BinaryConfusionMatrix, R2Score
-
 
 
 def log_reachability_data(space, loss, pred, labels: Tensor):
@@ -83,17 +82,13 @@ def main(model_type: str,
     else:
         run.name = f"trial/{trial.number}/{run.name}"
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"GPU is available, CUDA used")
-    else:
-        device = torch.device("cpu")
-        print("GPU not available, CPU used")
+    device = torch.device("cuda")
 
-    training_set = Dataset(Path(__file__).parent.parent / 'data' / 'train', device, batch_size, settings["only_reachable"],
+    training_set = Dataset(Path(__file__).parent.parent / 'data' / 'train', device, batch_size,
+                           settings["only_reachable"],
                            minimum_balance)
     validation_set = Dataset(Path(__file__).parent.parent / 'data' / 'val', device, 10000, settings["only_reachable"],
-                             minimum_balance)
+                             0.0)
     validation_iterator = infinite_loader(validation_set)
 
     model = Model(
@@ -111,10 +106,13 @@ def main(model_type: str,
 
     for e in range(epochs):
         for i, (weights, mdhs, poses, labels) in enumerate(tqdm(training_set, desc=f"Training")):
-            #weights = weights.to(device, non_blocking=True)
-            #mdhs = mdhs.to(device, non_blocking=True)
-            #poses = poses.to(device, non_blocking=True)
-            #labels = labels.to(device, non_blocking=True)
+            step = e * len(training_set) + i
+            commit = i % 25 != 0
+
+            # weights = weights.to(device, non_blocking=True)
+            # mdhs = mdhs.to(device, non_blocking=True)
+            # poses = poses.to(device, non_blocking=True)
+            # labels = labels.to(device, non_blocking=True)
 
             model.train()
             model.zero_grad()
@@ -123,23 +121,20 @@ def main(model_type: str,
             loss.backward()
             optimizer.step()
 
-            validation_condition = i % 25 == 0
-            run.log(data=settings["log_data"]('train', loss, pred, labels), step=e * len(training_set) + i,
-                    commit=not validation_condition)
+            run.log(data=settings["log_data"]('train', loss, pred, labels), step=step, commit=commit)
 
-            if validation_condition:
+            if not commit:
                 with torch.no_grad():
                     model.eval()
                     weights, mdh, poses, labels = next(validation_iterator)
-                    #weights = weights.to(device, non_blocking=True)
-                    #mdh = mdh.to(device, non_blocking=True)
-                    #poses = poses.to(device, non_blocking=True)
-                    #labels = labels.to(device, non_blocking=True)
+                    # weights = weights.to(device, non_blocking=True)
+                    # mdh = mdh.to(device, non_blocking=True)
+                    # poses = poses.to(device, non_blocking=True)
+                    # labels = labels.to(device, non_blocking=True)
                     pred = model(poses, mdh)
                     loss = loss_function(pred, labels, weights)
 
-                    run.log(data=settings["log_data"]('val', loss, pred, labels), step=e * len(training_set) + i,
-                            commit=True)
+                    run.log(data=settings["log_data"]('val', loss, pred, labels), step=step, commit=True)
 
                 if trial is not None:
                     trial.report(loss, e)
@@ -170,34 +165,17 @@ if __name__ == '__main__':
                         choices=['reachability_classifier', 'manipulability_estimator'])
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--batch_size", type=int, default=1000)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--early_stopping_threshold", type=int, default=-1)
     parser.add_argument("--encoder_width", type=int, default=512, help="hidden size of the LSTM")
     parser.add_argument("--encoder_depth", type=int, default=1, help="# of recurrent LSTM layers")
     parser.add_argument("--decoder_width", type=int, default=128, help="hidden size of the occupancy network")
     parser.add_argument("--decoder_depth", type=int, default=4, help="number of ResNet blocks in the occupancy network")
-    parser.add_argument("--minimum_balance", type=float, default=0.01,
+    parser.add_argument("--minimum_balance", type=float, default=0.5,
                         help="minimum balance of reachable/unreachable samples in each batch")
 
     args = parser.parse_args()
     kwargs = vars(args)
     print(args)
+
     main(**kwargs)
-    exit()
-    with torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA
-            ], profile_memory=True, record_shapes=True, with_modules=True
-    ) as prof:
-        main(**kwargs)
-    #prof.export_chrome_trace("trace.json")
-    print("Profiler results:")
-    print("CPU results:")
-    print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-    print("CUDA results:")
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
-    print("Memory results (CUDA):")
-    print(prof.key_averages().table(sort_by="self_cuda_memory_usage", row_limit=10))
-    print("Shapes results:")
-    print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10))

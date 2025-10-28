@@ -3,10 +3,10 @@ import os
 import re
 import torch
 import pyarrow.parquet
-from estimate_workspace import estimate_workspace
+from estimate_workspace import estimate_workspace, N_CELLS
 from tqdm import tqdm
 from pathlib import Path
-from mdh_generation import sample_mdh
+from sample_mdh import sample_mdh
 
 if torch.cuda.is_available():
     device = torch.device("cuda")
@@ -16,7 +16,7 @@ else:
     print("GPU not available, CPU used")
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--mode", type=str, default="val", help="what data to generate")
+parser.add_argument("--mode", type=str, default="test", help="what data to generate")
 parser.add_argument("--num_robots", type=int, default=1, help="number of robots to generate")
 args = parser.parse_args()
 kwargs = vars(args)
@@ -38,12 +38,14 @@ for dof in range(1, 8):
 
         poses, labels, joints = estimate_workspace(mdh)
 
-        if labels.sum() == -3240*3112:
+        if labels.sum() == -N_CELLS:
             pbar.set_description(f"Skipping robot - no valid configurations found")
             continue
 
         mdh = torch.nn.functional.pad(mdh, (0, 0, 0, 7 - dof), "constant", 0)
         joints = torch.nn.functional.pad(joints, (0, 7 - dof), "constant", 0)
+
+
 
         data = {
             "mdh": pyarrow.FixedShapeTensorArray.from_numpy_ndarray(

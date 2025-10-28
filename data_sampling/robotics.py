@@ -3,7 +3,7 @@ from beartype import beartype
 from jaxtyping import Float, Bool, jaxtyped
 from torch import Tensor
 
-
+LINK_RADIUS = 0.025
 @jaxtyped(typechecker=beartype)
 def transformation_matrix(alpha: Float[Tensor, "*batch 1"], a: Float[Tensor, "*batch 1"], d: Float[Tensor, "*batch 1"],
                           theta: Float[Tensor, "*batch 1"]) -> Float[Tensor, "*batch 4 4"]:
@@ -149,7 +149,7 @@ v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, N
 @jaxtyped(typechecker=beartype)
 def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
                     poses: Float[torch.Tensor, "*batch dofp1 4 4"],
-                    radius: float = 0.025) -> Bool[torch.Tensor, "*batch"]:
+                    radius: float = LINK_RADIUS) -> Bool[torch.Tensor, "*batch"]:
     """
     Compute whether the robot is in self-collision for each batch element.
 

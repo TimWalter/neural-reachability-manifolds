@@ -1,34 +1,13 @@
 import torch
-from jaxtyping import Float
+from beartype import beartype
+from jaxtyping import Float, jaxtyped
 from torch import Tensor
 
-
-def quaternion_to_rotation_matrix(quaternions: Float[Tensor, "batch_size 4"]) -> Float[Tensor, "batch_size 3 3"]:
+@jaxtyped(typechecker=beartype)
+def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3"], epsilon: float = 1e-6) \
+        -> Float[Tensor, "batch 3"]:
     """
-    Convert quaternions to rotation matrices.
-
-    Args:
-        quaternions: Batched quaternions in (w, x, y, z) format
-    Returns:
-        Batched rotation matrices
-    """
-    w, x, y, z = quaternions.unbind(-1)
-
-    ww, xx, yy, zz = w * w, x * x, y * y, z * z
-    wx, wy, wz = w * x, w * y, w * z
-    xy, xz, yz = x * y, x * z, y * z
-
-    rotation_matrix = torch.stack([
-        torch.stack([1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy)], dim=-1),
-        torch.stack([2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx)], dim=-1),
-        torch.stack([2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)], dim=-1),
-    ], dim=-2)
-    return rotation_matrix
-
-def rotation_matrix_to_axis_angle(rotation_matrix: Float[Tensor, "batch_size 3 3"], epsilon: float = 1e-6) \
-        -> Float[Tensor, "batch_size 3"]:
-    """
-    Convert rotation matrix to axis-angle vector.
+    Convert rotation matrix to rotation vector (axis-angle).
 
     Args:
         rotation_matrix: Rotation matrix
@@ -66,7 +45,6 @@ def rotation_matrix_to_axis_angle(rotation_matrix: Float[Tensor, "batch_size 3 3
         I = I.unsqueeze(0)
     D, P = torch.linalg.eig(rotation_matrix - I)
 
-
     vector_idx = torch.argmax((torch.abs(D.real) < epsilon).to(torch.int8), dim=-1, keepdim=True)
     axis_2 = torch.gather(P.real, -1, index=vector_idx.repeat_interleave(repeats=3, dim=-1)[..., None]).squeeze()
     axis = torch.where(
@@ -82,3 +60,46 @@ def rotation_matrix_to_axis_angle(rotation_matrix: Float[Tensor, "batch_size 3 3
 
     # Return the axis-angle vector (axis * angle)
     return axis * angle[..., None]
+
+@jaxtyped(typechecker=beartype)
+def rotation_vector_to_quaternion(rotation_vectors: Float[Tensor, "*batch 3"]) -> Float[Tensor, "*batch 4"]:
+    """
+    Convert rotation vectors (axis-angle) to quaternions.
+
+    Args:
+        rotation_vectors: Batched rotation vectors
+
+    Returns:
+        Batched quaternions in (w, x, y, z) format
+    """
+    angle = torch.linalg.norm(rotation_vectors, dim=-1, keepdim=True)
+    axis = rotation_vectors / (angle + 1e-8)
+
+    return torch.cat([
+        torch.cos(angle / 2.0),
+        axis * torch.sin(angle / 2.0)
+    ], dim=-1)
+
+@jaxtyped(typechecker=beartype)
+def quaternion_to_rotation_matrix(quaternions: Float[Tensor, "*batch 4"]) -> Float[Tensor, "*batch 3 3"]:
+    """
+    Convert quaternions to rotation matrices.
+
+    Args:
+        quaternions: Batched quaternions in (w, x, y, z) format
+    Returns:
+        Batched rotation matrices
+    """
+    w, x, y, z = quaternions.unbind(-1)
+
+    ww, xx, yy, zz = w * w, x * x, y * y, z * z
+    wx, wy, wz = w * x, w * y, w * z
+    xy, xz, yz = x * y, x * z, y * z
+
+    rotation_matrix = torch.stack([
+        torch.stack([1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy)], dim=-1),
+        torch.stack([2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx)], dim=-1),
+        torch.stack([2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)], dim=-1),
+    ], dim=-2)
+    return rotation_matrix
+

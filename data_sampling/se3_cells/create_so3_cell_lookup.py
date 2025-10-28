@@ -1,10 +1,12 @@
 import torch
 from torch import Tensor
-from jaxtyping import Int, Float
-from scipy.spatial.transform import Rotation
+from beartype import beartype
+from jaxtyping import Int, Float, jaxtyped
 
+from data_sampling.orientation_representations import rotation_vector_to_quaternion
 
-def index_to_quaternion(idx: Int[Tensor, "batch_dim 3"], n_div: int) -> Float[Tensor, "batch_dim 4"]:
+@jaxtyped(typechecker=beartype)
+def index_to_quaternion(idx: Int[Tensor, "*batch 3"], n_div: int) -> Float[Tensor, "*batch 4"]:
     """Convert cell index to the center quaternion using Euler angles.
 
     Args:
@@ -14,9 +16,9 @@ def index_to_quaternion(idx: Int[Tensor, "batch_dim 3"], n_div: int) -> Float[Te
         quaternions
     """
     rotation_vector = ((idx + 0.5) / n_div) * 2 * torch.pi - torch.pi
-    return torch.from_numpy(Rotation.from_rotvec(rotation_vector).as_quat()).to(torch.float32)
+    return rotation_vector_to_quaternion(rotation_vector)
 
-
+@jaxtyped(typechecker=beartype)
 def quaternion_distance(q1: Float[Tensor, "batch_dim1 4"], q2: Float[Tensor, "batch_dim2 4"]) \
         -> Float[Tensor, "batch_dim1 batch_dim2"]:
     """

@@ -1,7 +1,7 @@
 import argparse
 import torch
 from model import Model
-from data_creation.dataset import Dataset
+from data_sampling.dataset import Dataset
 from tqdm import tqdm
 from pathlib import Path
 import json
@@ -29,12 +29,8 @@ def main(model_type: str,
                      config={"model": model_folder},
                      group="eval_" + model_type)
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"GPU is available, CUDA used")
-    else:
-        device = torch.device("cpu")
-        print("GPU not available, CPU used")
+    device = torch.device("cuda")
+
 
     test_set = Dataset(Path(__file__).parent.parent / 'data' / 'test', device, 100000, settings["only_reachable"], 0.0)
 
