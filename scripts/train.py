@@ -25,14 +25,12 @@ def log_manipulability_data(space, loss, pred, labels):
             f'{space}/R2Score': R2Score().update(pred, labels).compute().cpu()}
 
 
-def reachability_loss(pred: Tensor, labels: Tensor, weights: Tensor):
-    return torch.nn.BCELoss(weight=weights, reduction='mean')(pred, (labels != -1).to(pred.dtype))
+def reachability_loss(pred: Tensor, labels: Tensor):
+    return torch.nn.BCELoss(reduction='mean')(pred, (labels != -1).to(pred.dtype))
 
 
-def manipulability_loss(pred: Tensor, labels: Tensor, weights: Tensor):
-    mse_loss = torch.nn.MSELoss(reduction='none')(pred, labels)
-    weighted_loss = mse_loss * weights
-    return weighted_loss.mean()
+def manipulability_loss(pred: Tensor, labels: Tensor):
+    return torch.nn.MSELoss(reduction='mean')(pred, labels)
 
 
 def infinite_loader(data_loader):
@@ -66,7 +64,6 @@ def main(model_type: str,
          decoder_width: int,
          encoder_depth: int,
          decoder_depth: int,
-         minimum_balance: float,
          trial: optuna.Trial = None
          ):
     settings = model_type_settings[model_type]
@@ -84,11 +81,8 @@ def main(model_type: str,
 
     device = torch.device("cuda")
 
-    training_set = Dataset(Path(__file__).parent.parent / 'data' / 'train', device, batch_size,
-                           settings["only_reachable"],
-                           minimum_balance)
-    validation_set = Dataset(Path(__file__).parent.parent / 'data' / 'val', device, 10000, settings["only_reachable"],
-                             0.0)
+    training_set = Dataset(Path(__file__).parent.parent / 'data' / 'train', batch_size, settings["only_reachable"])
+    validation_set = Dataset(Path(__file__).parent.parent / 'data' / 'val', 10000, settings["only_reachable"])
     validation_iterator = infinite_loader(validation_set)
 
     model = Model(
@@ -105,19 +99,18 @@ def main(model_type: str,
     early_stopping_counter = 0
 
     for e in range(epochs):
-        for i, (weights, mdhs, poses, labels) in enumerate(tqdm(training_set, desc=f"Training")):
+        for i, (mdhs, poses, labels) in enumerate(tqdm(training_set, desc=f"Training")):
             step = e * len(training_set) + i
             commit = i % 25 != 0
 
-            # weights = weights.to(device, non_blocking=True)
-            # mdhs = mdhs.to(device, non_blocking=True)
-            # poses = poses.to(device, non_blocking=True)
-            # labels = labels.to(device, non_blocking=True)
+            mdhs = mdhs.to(device, non_blocking=True)
+            poses = poses.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
             model.train()
             model.zero_grad()
             pred = model(poses, mdhs)
-            loss = loss_function(pred, labels, weights)
+            loss = loss_function(pred, labels)
             loss.backward()
             optimizer.step()
 
@@ -126,13 +119,12 @@ def main(model_type: str,
             if not commit:
                 with torch.no_grad():
                     model.eval()
-                    weights, mdh, poses, labels = next(validation_iterator)
-                    # weights = weights.to(device, non_blocking=True)
-                    # mdh = mdh.to(device, non_blocking=True)
-                    # poses = poses.to(device, non_blocking=True)
-                    # labels = labels.to(device, non_blocking=True)
+                    mdh, poses, labels = next(validation_iterator)
+                    mdh = mdh.to(device, non_blocking=True)
+                    poses = poses.to(device, non_blocking=True)
+                    labels = labels.to(device, non_blocking=True)
                     pred = model(poses, mdh)
-                    loss = loss_function(pred, labels, weights)
+                    loss = loss_function(pred, labels)
 
                     run.log(data=settings["log_data"]('val', loss, pred, labels), step=step, commit=True)
 
@@ -165,17 +157,28 @@ if __name__ == '__main__':
                         choices=['reachability_classifier', 'manipulability_estimator'])
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--batch_size", type=int, default=1000)
-    parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--early_stopping_threshold", type=int, default=-1)
     parser.add_argument("--encoder_width", type=int, default=512, help="hidden size of the LSTM")
     parser.add_argument("--encoder_depth", type=int, default=1, help="# of recurrent LSTM layers")
     parser.add_argument("--decoder_width", type=int, default=128, help="hidden size of the occupancy network")
     parser.add_argument("--decoder_depth", type=int, default=4, help="number of ResNet blocks in the occupancy network")
-    parser.add_argument("--minimum_balance", type=float, default=0.5,
-                        help="minimum balance of reachable/unreachable samples in each batch")
 
     args = parser.parse_args()
     kwargs = vars(args)
     print(args)
+    import os
+    import shutil
+    for dof in range(1, 8):
+        # Move parquet files
+        if dof != 1:
+            os.rename(Path(__file__).parent.parent / "data" / "train" / f'{dof - 1}_0.parquet',
+                      Path(__file__).parent.parent / "data" / "test" / f'{dof - 1}_0.parquet')
+            os.remove(Path(__file__).parent.parent / "data" / "val" / f'{dof - 1}_0.parquet')
 
-    main(**kwargs)
+        os.rename(Path(__file__).parent.parent / "data" / "test" / f'{dof}_0.parquet',
+                  Path(__file__).parent.parent / "data" / "train" / f'{dof}_0.parquet')
+        shutil.copy(Path(__file__).parent.parent / "data" / "train" / f'{dof}_0.parquet',
+                    Path(__file__).parent.parent / "data" / "val" / f'{dof}_0.parquet')
+
+        main(**kwargs)

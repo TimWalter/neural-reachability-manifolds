@@ -32,7 +32,7 @@ def main(model_type: str,
     device = torch.device("cuda")
 
 
-    test_set = Dataset(Path(__file__).parent.parent / 'data' / 'test', device, 100000, settings["only_reachable"], 0.0)
+    test_set = Dataset(Path(__file__).parent.parent / 'data' / 'test', 100000, settings["only_reachable"])
 
     model = Model(
         encoder_config={'width': encoder_width, 'depth': encoder_depth},
@@ -54,7 +54,7 @@ def main(model_type: str,
     metric = R2Score() if settings["only_reachable"] else BinaryConfusionMatrix()
 
     model.eval()
-    for i, (weights, mdhs, poses, labels) in enumerate(tqdm(test_set, desc=f"Evaluation")):
+    for i, (mdhs, poses, labels) in enumerate(tqdm(test_set, desc=f"Evaluation")):
         if current_mdh is not None and (current_mdh != mdhs[0]).any():
             eval_log(table, loss, current_mdh, metric, settings, run)
         if current_mdh is None or (current_mdh != mdhs[0]).any():
@@ -63,14 +63,13 @@ def main(model_type: str,
             sample_count = 0
             metric.reset()
 
-        # weights = weights.to(device, non_blocking=True)
-        # mdhs = mdhs.to(device, non_blocking=True)
-        # poses = poses.to(device, non_blocking=True)
-        # labels = labels.to(device, non_blocking=True)
+        mdhs = mdhs.to(device, non_blocking=True)
+        poses = poses.to(device, non_blocking=True)
+        labels = labels.to(device, non_blocking=True)
 
         with torch.no_grad():
             pred = model(poses, mdhs)
-        loss = (loss * sample_count + loss_function(pred, labels, weights) * labels.shape[0]) / (
+        loss = (loss * sample_count + loss_function(pred, labels) * labels.shape[0]) / (
                 sample_count + labels.shape[0])
         sample_count += labels.shape[0]
         metric.update(pred, labels if settings["only_reachable"] else (labels != -1).to(torch.int64))
@@ -81,7 +80,7 @@ def main(model_type: str,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_type", type=str, default="reachability_classifier")
-    parser.add_argument("--model_id", type=int, default=388)
+    parser.add_argument("--model_id", type=int, default=452)
     args = parser.parse_args()
 
     model_dir = Path(__file__).parent.parent / "trained_models"
