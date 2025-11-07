@@ -17,7 +17,22 @@ SO3_LOOKUP_MIN_DISTANCE = 2 * torch.pi / 256
 SE3_CELLS = torch.eye(4, device="cpu").repeat(R3_CELLS.shape[0] * SO3_CELLS.shape[0], 1, 1)
 SE3_CELLS[:, :3, 3] = R3_CELLS.repeat_interleave(SO3_CELLS.shape[0], dim=0)
 SE3_CELLS[:, :3, :3] = SO3_CELLS.repeat(R3_CELLS.shape[0], 1, 1)
+"""
+from data_sampling.robotics import LINK_RADIUS
+# Mask out cells that are too close to the origin in translation and pointing towards the origin in rotation,
+# which makes them theoretically unreachable
+r = torch.linalg.norm(SE3_CELLS[:, :3, 3], dim=1, keepdim=True)
+d = (SE3_CELLS[:, :3, 2] * SE3_CELLS[:, :3, 3] / r).sum(dim=1)
+r_inner = 1 - torch.sqrt(torch.tensor([8.0]) * LINK_RADIUS ** 2)  # Pointing inwards is no longer possible
+r_outer = 1 - 2 * LINK_RADIUS  # Pointing at right angle to the inward direction is no longer possible
+# Stupid linear interpolation between the two results
+d_max = 1 - (r - r_inner) / (r_outer - r_inner)
+d_max = torch.clamp(d_max, min=0, max=1)
+mask = (d > d_max.squeeze())
+SE3_CELLS = SE3_CELLS[~mask]
+"""
 N_CELLS = SE3_CELLS.shape[0]
+
 
 @jaxtyped(typechecker=beartype)
 def r3_indices(positions: Float[Tensor, "batch 3"]) -> Int[Tensor, "batch"]:
