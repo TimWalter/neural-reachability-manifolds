@@ -210,30 +210,3 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     collision_flags = (distances < 0).any(dim=-1)
 
     return collision_flags.reshape(batch_shape)
-
-
-if __name__ == "__main__":
-    import pyarrow.parquet
-    from pathlib import Path
-
-    table = pyarrow.parquet.read_table(Path(__file__).parent.parent / "data" / "train" / "3_0.parquet")
-    data = {
-        "mdh": torch.from_numpy(table['mdh'].combine_chunks().to_numpy_ndarray()),
-        "poses": torch.from_numpy(table['poses'].combine_chunks().to_numpy_ndarray()),
-        "labels": torch.from_numpy(table['labels'].to_numpy(zero_copy_only=False)),
-        "joints": torch.from_numpy(table['joints'].combine_chunks().to_numpy_ndarray()),
-    }
-    idx = torch.where(data["labels"] != -1)[0][20]
-    mdh = data["mdh"][idx].view(-1, 3)[:4, :]
-    joints = data["joints"][idx][:4].unsqueeze(1)
-    poses = forward_kinematics(mdh, joints)
-
-    print(mdh)
-    print(torch.cat([poses[..., -1, :3, 3], poses[..., -1, :3, :2].flatten(start_dim=-2, end_dim=-1)], dim=-1))
-    print(data["poses"][idx])
-    jacobian = geometric_jacobian(poses)
-    manip_idx = yoshikawa_manipulability(jacobian)
-    collision = collision_check(mdh, poses)
-    print("Manipulability index:", manip_idx)
-    print("In collision:", collision)
-    print(data["labels"][idx])
