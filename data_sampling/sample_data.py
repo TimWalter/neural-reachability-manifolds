@@ -18,7 +18,7 @@ parser.add_argument("--folder", type=str, default="train", help="what data to ge
 parser.add_argument("--num_robots", type=int, default=2, help="number of robots to generate")
 parser.add_argument("--num_samples", type=int, default=10_000, help="number of samples to generate per robot")
 parser.add_argument("--chunk_size", type=int, default=1_000, help="minimum read size for zarr arrays")
-parser.add_argument("--shard_size", type=int, default=2, help="number of robots per shard in zarr arrays")
+parser.add_argument("--shard_size", type=int, default=100, help="number of robots per shard in zarr arrays")
 args = parser.parse_args()
 
 NUM_ROB = args.num_robots
@@ -43,6 +43,9 @@ morph_store = root[morph_store_name]
 
 @jaxtyped(typechecker=beartype)
 def save_shard(samples: Float[Tensor, "NUM_SAMPLES_x_SHARD_SIZE 3"]):
+    if args.folder != "train":
+        samples = samples[torch.randperm(samples.shape[0])]
+
     existing = [int(k) for k in root.array_keys() if k.isdigit()]
     shard_idx = max(existing) + 1 if existing else 0
     shard_name = str(shard_idx)
