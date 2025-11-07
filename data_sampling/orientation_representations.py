@@ -4,6 +4,22 @@ from jaxtyping import Float, jaxtyped
 from torch import Tensor
 
 @jaxtyped(typechecker=beartype)
+def ml_to_rotation_matrix(ml: Float[Tensor, "*batch 6"]) -> Float[Tensor, "*batch 3 3"]:
+    """
+    Convert 6D rotation representation to 3x3 rotation matrix.
+
+    Args:
+        ml: 6D rotation representation
+
+    Returns:
+        Rotation matrix
+    """
+    r1 = ml[..., :3]
+    r2 = ml[..., 3:]
+    r3 = torch.cross(r1, r2, dim=-1)
+    return torch.stack([r1, r2, r3], dim=-1)
+
+@jaxtyped(typechecker=beartype)
 def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3"], epsilon: float = 1e-6) \
         -> Float[Tensor, "batch 3"]:
     """
