@@ -4,7 +4,7 @@ import wandb
 import torch
 import argparse
 
-from model import ReachabilityClassifier as Model
+from model import ReachabilityClassifierLSTM as Model
 from dataset import Dataset
 from tqdm import tqdm
 from pathlib import Path

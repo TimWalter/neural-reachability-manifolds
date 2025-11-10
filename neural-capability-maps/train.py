@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch import Tensor
 from tqdm import tqdm
 from pathlib import Path
-from model import ReachabilityClassifier as Model
+from model import ReachabilityClassifierTransformer as Model
 from dataset import Dataset, SingleDataset
 
 
@@ -36,16 +36,16 @@ def main(epochs: int,
          trial: optuna.Trial = None
          ):
     if model_hyperparameter is None:
-        model_hyperparameter = {
-            'encoder_config': {'width': 512, 'depth': 1},
-            'decoder_config': {'width': 128, 'depth': 4}
-        }
         #model_hyperparameter = {
-        #    'encoder_config': {"nhead": 8, "dim_feedforward": 640, "dropout": 0.1},
-        #    'decoder_config': {"n_heads": 8, "ff_dim": 640, "dropout": 0.1},
-        #    "latent_morph": 160, "latent_pose": 160,
-        #    "num_encoder_blocks": 4, "num_decoder_blocks": 4
+        #    'encoder_config': {'width': 512, 'depth': 1},
+        #    'decoder_config': {'width': 128, 'depth': 4}
         #}
+        model_hyperparameter = {
+            'encoder_config': {"nhead": 8, "dim_feedforward": 640, "dropout": 0.0},
+            'decoder_config': {"n_heads": 8, "mlp_dim": 640, "dropout": 0.0},
+            "latent_morph": 160, "latent_pose": 160,
+            "num_encoder_blocks": 4, "num_decoder_blocks": 4
+        }
     if optimiser_hyperparameter is None:
         optimiser_hyperparameter = {'lr': 5e-4}
     settings = {'epochs': epochs, 'batch_size': batch_size, 'early_stopping': early_stopping}
@@ -64,8 +64,8 @@ def main(epochs: int,
     else:
         run.name = f"trial/{trial.number}/{run.name}"
 
-    training_set = Dataset(Path(__file__).parent.parent / 'data' / 'train', batch_size, True, True)
-    validation_set = Dataset(Path(__file__).parent.parent / 'data' / 'val', batch_size, False, False)
+    training_set = SingleDataset(Path(__file__).parent.parent / 'data' / 'train', batch_size, True, True)
+    validation_set = SingleDataset(Path(__file__).parent.parent / 'data' / 'val', batch_size, False, False)
 
     model = Model(**model_hyperparameter).to(device)
     optimizer = optim.Adam(model.parameters(), **optimiser_hyperparameter)
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     wandb.login(key="")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--early_stopping", type=int, default=-1)
 

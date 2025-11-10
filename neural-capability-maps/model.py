@@ -1,213 +1,169 @@
-from typing import Union
-
 import torch
 import torch.nn as nn
-from jaxtyping import Float
 from torch import Tensor
-import torch.nn.functional as F
+from jaxtyping import Float
 
-
-# === Rotary embedding utilities ===
-def build_rotary_freqs(dim, max_seq_len=2048, base=10000):
-    pos = torch.arange(max_seq_len, dtype=torch.float32)
-    freqs = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-    angles = torch.einsum('i,j->ij', pos, freqs)
-    freqs_cos = angles.cos()
-    freqs_sin = angles.sin()
-    return freqs_cos, freqs_sin
-
-def apply_rotary(q, k, freqs_cos, freqs_sin):
-    # q, k: (..., seq_len, dim)
-    q1, q2 = q[..., ::2], q[..., 1::2]
-    k1, k2 = k[..., ::2], k[..., 1::2]
-    q_rot = torch.cat([q1 * freqs_cos - q2 * freqs_sin,
-                       q1 * freqs_sin + q2 * freqs_cos], dim=-1)
-    k_rot = torch.cat([k1 * freqs_cos - k2 * freqs_sin,
-                       k1 * freqs_sin + k2 * freqs_cos], dim=-1)
-    return q_rot, k_rot
-
-
-# === Rotary-enhanced TransformerEncoderLayer ===
-class RotaryTransformerEncoderLayer(nn.TransformerEncoderLayer):
-    def __init__(self, *args, max_seq_len=2048, base=10000, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.max_seq_len = max_seq_len
-        self.base = base
-        self.register_buffer("freqs_cos", None, persistent=False)
-        self.register_buffer("freqs_sin", None, persistent=False)
-
-    def _maybe_init_freqs(self, seq_len, device):
-        if self.freqs_cos is None or seq_len > self.freqs_cos.size(0):
-            freqs_cos, freqs_sin = build_rotary_freqs(self.self_attn.embed_dim, seq_len, self.base)
-            self.freqs_cos = freqs_cos.to(device)
-            self.freqs_sin = freqs_sin.to(device)
-
-    def forward(self, src, *args, **kwargs):
-        """Batch-first input; no causal mask."""
-        seq_len = src.size(1)
-        self._maybe_init_freqs(seq_len, src.device)
-
-        x = src
-        x_norm = self.norm1(x)
-
-        # manual QKV projection
-        qkv = F.linear(x_norm, self.self_attn.in_proj_weight, self.self_attn.in_proj_bias)
-        q, k, v = qkv.chunk(3, dim=-1)
-
-        # apply rotary embeddings to Q,K
-        q, k = apply_rotary(q, k, self.freqs_cos[:seq_len], self.freqs_sin[:seq_len])
-
-        # run standard PyTorch MHA (uses fused kernel if possible)
-        attn_output, _ = self.self_attn(query=q, key=k, value=v, need_weights=False)
-
-        # standard residual + FFN
-        x = self.norm2(x + self.dropout1(attn_output))
-        x = x + self.dropout2(self.linear2(self.dropout(self.activation(self.linear1(x)))))
-        return x
 
 class ReachabilityClassifierTransformer(nn.Module):
-    def __init__(self,
-                 latent_morph: int, encoder_config: dict, num_encoder_blocks: int,
+    def __init__(self, latent_morph: int, encoder_config: dict, num_encoder_blocks: int,
                  latent_pose: int, decoder_config: dict, num_decoder_blocks: int):
+        assert latent_morph % 2 == 0, "latent_morph must be even for rotary embeddings"
         super().__init__()
         self.morph_proj = nn.Sequential(nn.Linear(3, latent_morph), nn.ReLU())
-        self.encoder = nn.Sequential(
-            nn.TransformerEncoder(RotaryTransformerEncoderLayer(d_model=latent_morph, batch_first=True, **encoder_config),
-                                  num_layers=num_encoder_blocks),
+        self.encoder = nn.Sequential(nn.TransformerEncoder(
+            RotaryTransformerEncoderLayer(latent_morph, **encoder_config),
+            num_layers=num_encoder_blocks),
             nn.LayerNorm(latent_morph))
         self.pose_proj = nn.Sequential(nn.Linear(9, latent_pose), nn.ReLU())
         self.decoder = nn.ModuleList([PoseDecoder(latent_pose, **decoder_config)
-                                       for _ in range(num_decoder_blocks)])
+                                      for _ in range(num_decoder_blocks)])
         self.classifier_head = nn.Sequential(
             nn.LayerNorm(latent_pose),
             nn.Linear(latent_pose, 1),
             nn.Sigmoid()
         )
 
-    def forward(self,  pose: Float[Tensor, "batch 9"], morphology: Float[Tensor, "batch seq 3"]) \
+    def forward(self, pose: Float[Tensor, "batch 9"], morph: Float[Tensor, "batch seq 3"]) \
             -> Float[Tensor, "batch 1"]:
-        morph_latent = self.morph_proj(morphology)
+        morph_latent = self.morph_proj(morph)
         morph_enc = self.encoder(morph_latent)
-        pose_latent = self.pose_proj(pose)
-        pose_dec = pose_latent
+
+        x = self.pose_proj(pose)
         for block in self.decoder:
-            pose_dec = block(pose_dec, morph_enc)
-        out = self.classifier_head(pose_dec)
-        return out
+            x = block(x, morph_enc)
+
+        pred = self.classifier_head(x)
+        return pred
+
+
+class RotaryTransformerEncoderLayer(nn.TransformerEncoderLayer):
+    def __init__(self, *args, max_seq_len=2048, base=10000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_seq_len = max_seq_len
+        self.base = base
+        self.register_buffer("freq_cos", None, persistent=False)
+        self.register_buffer("freq_sin", None, persistent=False)
+
+    def init_freq(self, device):
+        pos = torch.arange(self.max_seq_len, dtype=torch.float32)
+        freq = 1.0 / (self.base ** (torch.arange(0, self.self_attn.embed_dim, 2).float() / self.self_attn.embed_dim))
+        angles = torch.outer(pos, freq)
+        self.freq_cos = angles.cos().to(device)
+        self.freq_sin = angles.sin().to(device)
+
+    def apply_rotary_embedding(self, q, k):
+        max_len = q.size(1)
+
+        cos = self.freq_cos[:max_len].unsqueeze(0)
+        sin = self.freq_sin[:max_len].unsqueeze(0)
+        q1, q2 = q[..., ::2], q[..., 1::2]
+        k1, k2 = k[..., ::2], k[..., 1::2]
+        q_rot = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
+        k_rot = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
+
+        return q_rot, k_rot
+
+    def forward(self, morph_latent: Float[Tensor, "batch seq latent_morph"], *args, **kwargs) \
+            -> Float[Tensor, "batch seq latent_morph"]:
+        if morph_latent.is_nested: # Not supported for now
+            morph_latent = torch.nested.to_padded_tensor(morph_latent, 0.0)
+
+        if self.freq_cos is None:
+            self.init_freq(morph_latent.device)
+
+        qkv = nn.functional.linear(self.norm1(morph_latent), self.self_attn.in_proj_weight, self.self_attn.in_proj_bias)
+        q, k, v = qkv.chunk(3, dim=-1)
+
+        q, k = self.apply_rotary_embedding(q, k)
+
+        attn_out, _ = self.self_attn(q, k, v, need_weights=False)
+        x = morph_latent + self.dropout1(attn_out)
+        x = x + self.dropout2(self.linear2(self.dropout(self.activation(self.linear1(self.norm2(x))))))
+        return x
 
 
 class PoseDecoder(nn.Module):
-    def __init__(self, latent_pose: int, n_heads: int, ff_dim: int, dropout: float = 0.1):
+    def __init__(self, latent_pose: int, n_heads: int, mlp_dim: int, dropout: float = 0.1):
         super().__init__()
-        self.cross_attn = nn.MultiheadAttention(embed_dim=latent_pose, num_heads=n_heads, batch_first=True,
-                                                dropout=dropout)
+        self.cross_attn = nn.MultiheadAttention(embed_dim=latent_pose, num_heads=n_heads,
+                                                batch_first=True, dropout=dropout)
         self.norm1 = nn.LayerNorm(latent_pose)
-        self.ff = nn.Sequential(
-            nn.Linear(latent_pose, ff_dim),
-            nn.ReLU(),
-            nn.Linear(ff_dim, latent_pose)
-        )
         self.norm2 = nn.LayerNorm(latent_pose)
+        self.mlp = nn.Sequential(
+            nn.Linear(latent_pose, mlp_dim),
+            nn.ReLU(),
+            nn.Linear(mlp_dim, latent_pose)
+        )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, pose_latent: Float[Tensor, "batch latent_pose"],
                 morph_enc: Float[Tensor, "batch seq latent_pose"]) -> Float[Tensor, "batch latent_pose"]:
-        q = pose_latent.unsqueeze(1)
-        attn_out, _ = self.cross_attn(query=q, key=morph_enc, value=morph_enc)
-        x = self.norm1(q + self.dropout(attn_out))
-        x2 = self.ff(x)
-        x = self.norm2(x + self.dropout(x2))
+        q = self.norm1(pose_latent).unsqueeze(1)
+        attn_out, _ = self.cross_attn(q, key=morph_enc, value=morph_enc)
+        x = pose_latent.unsqueeze(1) + self.dropout(attn_out)
+        x = x + self.dropout(self.mlp(self.norm2(x)))
         return x.squeeze(1)
 
 
-class ReachabilityClassifier(nn.Module):
-
+class ReachabilityClassifierLSTM(nn.Module):
     def __init__(self, encoder_config: dict, decoder_config: dict):
         super().__init__()
-        # Does initialization with 0 make sense in this scenario? such that it predicts all unreachable initially
+        self.encoder = EncoderLSTM(**encoder_config)
+        self.decoder = DecoderLSTM(encoding_dim=encoder_config["width"], **decoder_config)
         self.output_func = nn.Sigmoid()
-        self.encoder = Encoder(**encoder_config)
-        self.decoder = Decoder(encoding_dim=encoder_config["width"], **decoder_config)
 
-    def forward(self, poses, morph):
-        morph_encodings = self.encoder(morph)
-        output = self.decoder(poses, morph_encodings)
+    def forward(self, pose: Float[Tensor, "batch 9"], morph: Float[Tensor, "batch seq 3"]) \
+            -> Float[Tensor, "batch 1"]:
+        if morph.is_nested:
+            morph = torch.nested.to_padded_tensor(morph, 0.0)
+        morph_enc = self.encoder(morph)
+        output = self.decoder(pose, morph_enc)
         return self.output_func(output)
 
 
-class Encoder(nn.Module):
-    def __init__(self, width: int, depth: int, drop_prob=0):
+class EncoderLSTM(nn.Module):
+    def __init__(self, width: int, depth: int, drop_prob: float = 0.0):
         super().__init__()
-        self.width = width
-        self.depth = depth
         self.lstm = nn.LSTM(3, width, depth, dropout=drop_prob, batch_first=True)
 
-    def forward(self, x):
-        if isinstance(x, torch.Tensor) and x.is_nested:
-            # Convert nested tensor to padded tensor
-            x_padded = torch.nested.to_padded_tensor(x, padding=0.0)
-
-            # Extract actual lengths from nested tensor
-            # The nested tensor stores the actual sequence lengths
-            lengths = torch.tensor([t.size(0) for t in x.unbind()], device=x.device)
-
-            # Now proceed with the padded tensor
-            batch_size = x_padded.size(0)
-            h0 = torch.zeros(self.depth, batch_size, self.width).to(x.device)
-            c0 = torch.zeros(self.depth, batch_size, self.width).to(x.device)
-
-            # Pack the padded sequence with actual lengths
-            packed_x = nn.utils.rnn.pack_padded_sequence(
-                x_padded, lengths.cpu(), batch_first=True, enforce_sorted=False
-            )
-            _, (final_h, _) = self.lstm(packed_x, (h0, c0))
-            return final_h[-1]
-        else:
-            # Original padded tensor path
-            h0 = torch.zeros(self.depth, x.size(0), self.width).to(x.device)
-            c0 = torch.zeros(self.depth, x.size(0), self.width).to(x.device)
-            lengths = torch.ones(x.shape[0], device="cpu") * (x.shape[1] - 1)
-            packed_x = nn.utils.rnn.pack_padded_sequence(
-                x, lengths, batch_first=True, enforce_sorted=False
-            )
-            _, (final_h, _) = self.lstm(packed_x, (h0, c0))
-            return final_h[-1]
+    def forward(self, morph: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch encoding_dim"]:
+        if morph.is_nested:
+            lengths = torch.tensor([t.size(0) for t in morph.unbind()], device=morph.device)
+            morph = torch.nested.to_padded_tensor(morph, 0.0)
+            morph = nn.utils.rnn.pack_padded_sequence(morph, lengths, batch_first=True, enforce_sorted=False)
+        _, (h, _) = self.lstm(morph)
+        return h[-1]
 
 
-class Decoder(nn.Module):
+class DecoderLSTM(nn.Module):
     def __init__(self, width: int, depth: int, encoding_dim):
         super().__init__()
 
-        self.conv_p = nn.Conv1d(9, width, 1)
-        self.blocks = nn.ModuleList([
-            CResnetBlockConv1d(encoding_dim, width) for _ in range(depth)
-        ])
+        self.pose_proj = nn.Conv1d(9, width, 1)
+        self.blocks = nn.ModuleList([CResnetBlockConv1d(encoding_dim, width) for _ in range(depth)])
+        self.out_bn = CBatchNorm1d(encoding_dim, width)
+        self.out_conv = nn.Conv1d(width, 1, 1)
+        self.act = nn.ReLU()
 
-        self.bn = CBatchNorm1d(encoding_dim, width)
-        self.conv_out = nn.Conv1d(width, 1, 1)
-        self.actvn = nn.ReLU()
-
-    def forward(self, p, c):
-        net = self.conv_p(p.unsqueeze(2))
-
+    def forward(self, pose: Float[Tensor, "batch 9"], morph_enc: Float[Tensor, "batch encoding_dim"]) \
+            -> Float[Tensor, "batch 1"]:
+        x = self.pose_proj(pose.unsqueeze(2))
         for block in self.blocks:
-            net = block(net, c)
-
-        out = self.conv_out(self.actvn(self.bn(net, c)))
-
-        return out.squeeze(2)
+            x = block(x, morph_enc)
+        x = self.act(self.out_bn(x, morph_enc))
+        x = self.out_conv(x)
+        return x.squeeze(2)
 
 
 class CResnetBlockConv1d(nn.Module):
     ''' Conditional batch normalization-based Resnet block class.
 
     Args:
-        c_dim (int): dimension of latend conditioned code c
+        c_dim (int): dimension of latent conditioned code c
         size_in (int): input dimension
         size_out (int): output dimension
         size_h (int): hidden dimension
         norm_method (str): normalization method
-        legacy (bool): whether to use legacy blocks
     '''
 
     def __init__(self, c_dim, size_in, size_h=None, size_out=None,
