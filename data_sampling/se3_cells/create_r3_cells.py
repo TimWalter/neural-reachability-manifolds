@@ -1,7 +1,6 @@
 import csv
 import torch
 
-
 n_div = 18
 
 indices = torch.cartesian_prod(*[torch.arange(n_div)] * 3)

@@ -22,7 +22,7 @@ def index_to_quaternion(idx: Int[Tensor, "*batch 3"], n_div: int) -> Float[Tenso
 def quaternion_distance(q1: Float[Tensor, "batch_dim1 4"], q2: Float[Tensor, "batch_dim2 4"]) \
         -> Float[Tensor, "batch_dim1 batch_dim2"]:
     """
-    Angular distance between quaternions.
+    Geodesic distance between quaternions.
     Args:
         q1: quaternions 1
         q2: quaternions 2

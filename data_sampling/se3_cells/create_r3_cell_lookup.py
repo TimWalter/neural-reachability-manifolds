@@ -1,5 +1,3 @@
-import math
-
 import torch
 from torch import Tensor
 from beartype import beartype
@@ -35,15 +33,15 @@ def euclidean_distance(x1: Float[Tensor, "batch_dim1 3"],
     diff = x1[:, None, :] - x2[None, :, :]
     return torch.norm(diff, dim=2)
 
+if __name__ == "__main__":
+    r3_cells = torch.load("r3_cells.pt")
+    n_div = 18
 
-r3_cells = torch.load("r3_cells.pt")
-n_div = math.ceil(r3_cells.shape[0] ** (1/3))
 
+    indices = torch.cartesian_prod(*[torch.arange(n_div)] * 3)
+    lookup_centre = index_to_r3(indices, n_div)
+    dists = euclidean_distance(lookup_centre, r3_cells)
+    nearest_idx = torch.argmin(dists, dim=1)
+    cube = nearest_idx.reshape(n_div, n_div, n_div).to(torch.int32)
 
-indices = torch.cartesian_prod(*[torch.arange(n_div)] * 3)
-cube_cells = index_to_r3(indices, n_div)
-dists = euclidean_distance(cube_cells, r3_cells)
-nearest_idx = torch.argmin(dists, dim=1)
-cube = nearest_idx.reshape(n_div, n_div, n_div).to(torch.int32)
-
-torch.save(cube, "r3_cell_lookup.pt")
+    torch.save(cube, "r3_cell_lookup.pt")
