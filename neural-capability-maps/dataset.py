@@ -5,6 +5,7 @@ import random
 import bisect
 from pathlib import Path
 from data_sampling.se3_cells import SE3_CELLS
+from data_sampling.orientation_representations import rotation_matrix_to_ml
 
 
 class Dataset:
@@ -20,7 +21,7 @@ class Dataset:
         self.num_batches = self.offsets[-1]
 
         self.morphologies = torch.from_numpy(self.root["morphologies"][:].astype("float32", copy=False))
-        self.poses = torch.cat([SE3_CELLS[:, :3, 3], SE3_CELLS[:, :3, :2].reshape(-1, 6)], dim=-1).contiguous()
+        self.poses = torch.cat([SE3_CELLS[:, :3, 3], rotation_matrix_to_ml(SE3_CELLS[:, :3, :3])], dim=-1).contiguous()
 
     def __len__(self) -> int:
         return self.num_batches

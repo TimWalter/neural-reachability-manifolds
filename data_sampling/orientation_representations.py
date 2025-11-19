@@ -2,6 +2,21 @@ import torch
 from beartype import beartype
 from jaxtyping import Float, jaxtyped
 from torch import Tensor
+from scipy.spatial.transform import Rotation
+
+
+@jaxtyped(typechecker=beartype)
+def rotation_matrix_to_ml(rotation_matrix: Float[Tensor, "batch 3 3"]) -> Float[Tensor, "batch 6"]:
+    """
+    Convert 3x3 rotation matrix to 6D rotation representation
+
+    Args:
+        rotation_matrix: Rotation matrix
+
+    Returns:
+        6D rotation representation
+    """
+    return rotation_matrix[..., :3, :2].reshape(-1, 6)
 
 @jaxtyped(typechecker=beartype)
 def ml_to_rotation_matrix(ml: Float[Tensor, "*batch 6"]) -> Float[Tensor, "*batch 3 3"]:
@@ -19,8 +34,9 @@ def ml_to_rotation_matrix(ml: Float[Tensor, "*batch 6"]) -> Float[Tensor, "*batc
     r3 = torch.cross(r1, r2, dim=-1)
     return torch.stack([r1, r2, r3], dim=-1)
 
+
 @jaxtyped(typechecker=beartype)
-def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3"], epsilon: float = 1e-6) \
+def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3"]) \
         -> Float[Tensor, "batch 3"]:
     """
     Convert rotation matrix to rotation vector (axis-angle).
@@ -32,53 +48,12 @@ def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3
     Returns:
         Axis-angle vector
     """
-    rotation_matrix[torch.abs(rotation_matrix) < epsilon] = 0
+    return torch.from_numpy(Rotation.from_matrix(rotation_matrix.cpu()).as_rotvec()).to(
+        device=rotation_matrix.device, dtype=rotation_matrix.dtype)
 
-    trace = torch.vmap(torch.trace)(rotation_matrix)
-    angle = torch.acos((trace - 1) / 2)
-
-    # if trace->3, acos->0. There are numerical issues causing nan value
-    if torch.any((torch.abs(trace - 3) < epsilon)):
-        angle[torch.abs(trace - 3) < epsilon] = 0
-    # if trace->-1, acos->-pi.
-    if torch.any((torch.abs(trace - (-1)) < epsilon)):
-        angle[torch.abs(trace - (-1)) < epsilon] = torch.pi
-
-    # Avoid division by zero by setting a small epsilon for angles near zero
-    sin_angle = torch.sin(angle).clamp(min=epsilon)
-
-    # Compute the rotation axis for each matrix
-    # By definition, the rotation axis is the eigenvector corresponding to the eigenvalue 1
-    axis_1 = torch.stack([
-        (rotation_matrix[..., 2, 1] - rotation_matrix[..., 1, 2]) / (2 * sin_angle),
-        (rotation_matrix[..., 0, 2] - rotation_matrix[..., 2, 0]) / (2 * sin_angle),
-        (rotation_matrix[..., 1, 0] - rotation_matrix[..., 0, 1]) / (2 * sin_angle)
-    ], dim=-1)
-
-    # The above computation does not work when R is symmetric, so we compute axis_2 in this case.
-    I = torch.eye(3, device=rotation_matrix.device)
-    for _ in range(len(rotation_matrix.shape[:-2])):
-        I = I.unsqueeze(0)
-    D, P = torch.linalg.eig(rotation_matrix - I)
-
-    vector_idx = torch.argmax((torch.abs(D.real) < epsilon).to(torch.int8), dim=-1, keepdim=True)
-    axis_2 = torch.gather(P.real, -1, index=vector_idx.repeat_interleave(repeats=3, dim=-1)[..., None]).squeeze()
-    axis = torch.where(
-        torch.logical_or(
-            torch.all((rotation_matrix.transpose(-2, -1) - rotation_matrix) < epsilon, dim=(-2, -1)),
-            torch.isclose(angle, torch.tensor([torch.pi], device=angle.device))
-        )[..., None], axis_2, axis_1)
-
-    # Handle cases where the angle is close to zero by setting axis to zero
-    axis = torch.where(angle[..., None] < epsilon, torch.zeros_like(axis), axis)
-    if torch.any(axis.isnan()):
-        raise ValueError('nan axis')
-
-    # Return the axis-angle vector (axis * angle)
-    return axis * angle[..., None]
 
 @jaxtyped(typechecker=beartype)
-def rotation_vector_to_quaternion(rotation_vectors: Float[Tensor, "*batch 3"]) -> Float[Tensor, "*batch 4"]:
+def rotation_vector_to_quaternion(rotation_vectors: Float[Tensor, "batch 3"]) -> Float[Tensor, "batch 4"]:
     """
     Convert rotation vectors (axis-angle) to quaternions.
 
@@ -88,34 +63,39 @@ def rotation_vector_to_quaternion(rotation_vectors: Float[Tensor, "*batch 3"]) -
     Returns:
         Batched quaternions in (w, x, y, z) format
     """
-    angle = torch.linalg.norm(rotation_vectors, dim=-1, keepdim=True)
-    axis = rotation_vectors / (angle + 1e-8)
+    return torch.from_numpy(Rotation.from_rotvec(rotation_vectors.cpu()).as_quat()).float().to(
+        device=rotation_vectors.device, dtype=rotation_vectors.dtype)
 
-    return torch.cat([
-        torch.cos(angle / 2.0),
-        axis * torch.sin(angle / 2.0)
-    ], dim=-1)
 
 @jaxtyped(typechecker=beartype)
-def quaternion_to_rotation_matrix(quaternions: Float[Tensor, "*batch 4"]) -> Float[Tensor, "*batch 3 3"]:
+def quaternion_to_rotation_matrix(quaternions: Float[Tensor, "batch 4"]) -> Float[Tensor, "batch 3 3"]:
     """
     Convert quaternions to rotation matrices.
 
     Args:
-        quaternions: Batched quaternions in (w, x, y, z) format
+        quaternions: Batched quaternions in (a, b, c, d) format
     Returns:
         Batched rotation matrices
     """
-    w, x, y, z = quaternions.unbind(-1)
+    return torch.from_numpy(Rotation.from_quat(quaternions.cpu()).as_matrix()).float().to(
+        device=quaternions.device, dtype=quaternions.dtype)
 
-    ww, xx, yy, zz = w * w, x * x, y * y, z * z
-    wx, wy, wz = w * x, w * y, w * z
-    xy, xz, yz = x * y, x * z, y * z
 
-    rotation_matrix = torch.stack([
-        torch.stack([1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy)], dim=-1),
-        torch.stack([2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx)], dim=-1),
-        torch.stack([2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)], dim=-1),
-    ], dim=-2)
-    return rotation_matrix
+@jaxtyped(typechecker=beartype)
+def rotation_matrix_to_quaternion(rotation_matrix: Float[Tensor, "batch 3 3"]) -> Float[Tensor, "batch 4"]:
+    """
+    Convert rotation matrices to quaternions.
 
+    Args:
+        rotation_matrix: Rotation matrix
+    Returns:
+        Batched quaternions
+    """
+    return torch.from_numpy(Rotation.from_matrix(rotation_matrix.cpu()).as_quat()).float().to(
+        device=rotation_matrix.device, dtype=rotation_matrix.dtype)
+
+
+@jaxtyped(typechecker=beartype)
+def rotation_vector_to_rotation_matrix(rotation_vectors: Float[Tensor, "batch 3"]) -> Float[Tensor, "batch 3 3"]:
+    return torch.from_numpy(Rotation.from_rotvec(rotation_vectors.cpu()).as_matrix()).to(
+        device=rotation_vectors.device, dtype=rotation_vectors.dtype)

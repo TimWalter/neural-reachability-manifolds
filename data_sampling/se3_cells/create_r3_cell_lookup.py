@@ -3,6 +3,9 @@ from torch import Tensor
 from beartype import beartype
 from jaxtyping import Int, Float, jaxtyped
 
+from data_sampling.se3_cells import N_DIV_R3
+
+
 @jaxtyped(typechecker=beartype)
 def index_to_r3(idx: Int[Tensor, "*batch 3"], n_div: int) -> Float[Tensor, "*batch 3"]:
     """
@@ -16,6 +19,7 @@ def index_to_r3(idx: Int[Tensor, "*batch 3"], n_div: int) -> Float[Tensor, "*bat
         the center coordinates of the cube cells
     """
     return ((idx + 0.5) / n_div) * 2.0 - 1.0
+
 
 @jaxtyped(typechecker=beartype)
 def euclidean_distance(x1: Float[Tensor, "batch_dim1 3"],
@@ -33,10 +37,10 @@ def euclidean_distance(x1: Float[Tensor, "batch_dim1 3"],
     diff = x1[:, None, :] - x2[None, :, :]
     return torch.norm(diff, dim=2)
 
+
 if __name__ == "__main__":
     r3_cells = torch.load("r3_cells.pt")
-    n_div = 18
-
+    n_div = N_DIV_R3
 
     indices = torch.cartesian_prod(*[torch.arange(n_div)] * 3)
     lookup_centre = index_to_r3(indices, n_div)
