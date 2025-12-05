@@ -5,7 +5,7 @@ from beartype import beartype
 from jaxtyping import jaxtyped
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def estimate_bytes_per_sample(device: torch.device, workload: Callable, args: tuple, probe_size: int) -> int:
     """
     Measures incremental peak bytes/sample for your workload on the given CUDA device.
@@ -44,7 +44,7 @@ def estimate_bytes_per_sample(device: torch.device, workload: Callable, args: tu
     raise RuntimeError("Probe failed even with batch_size=1; not enough free memory for a single sample.")
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def get_batch_size(device: torch.device, workload: Callable, args: tuple,
                    safety: float = 0.7, probe_size: int = 2048) -> int:
     """

@@ -6,7 +6,7 @@ from jaxtyping import Float, Int, Bool, jaxtyped
 from data_sampling.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof+1}"]:
     """
     Sample link types
@@ -24,7 +24,7 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
     return link_type
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _reject_link_type(link_type: Int[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "batch_size"]:
     """
     Reject link type that have three consecutive intersecting axes
@@ -40,7 +40,7 @@ def _reject_link_type(link_type: Int[Tensor, "batch_size dofp1"]) -> Bool[Tensor
     return rejected
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor, "batch_size dofp1"]:
     """
     Sample link twist angles (alphas) uniformly from {-pi/2, 0, pi/2}
@@ -61,7 +61,7 @@ def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tens
     return link_twist
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _reject_link_twist(link_twist: Float[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "batch_size"]:
     """
     Reject alphas that have more than two consecutive parallel axes
@@ -77,7 +77,7 @@ def _reject_link_twist(link_twist: Float[Tensor, "batch_size dofp1"]) -> Bool[Te
     return rejected
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _sample_link_length(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor, "batch_size dofp1 2"]:
     """
     Sample link lengths uniformly on the simplex by normalizing exponential samples and splitting the lengths
@@ -101,7 +101,7 @@ def _sample_link_length(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Ten
     return link_lengths
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _reject_link_length(link_length: Float[Tensor, "batch_size dofp1 2"]) -> Bool[Tensor, "batch_size"]:
     """
     Reject link lengths that are smaller than twice the link radius (0.025) but not zero.
@@ -116,7 +116,7 @@ def _reject_link_length(link_length: Float[Tensor, "batch_size dofp1 2"]) -> Boo
     return rejected
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _sample_morph(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1} 3"]:
     """
     Sample morphologies, encoded as MDH parameters (alpha, a, d), given their respective rejection criteria.
@@ -146,7 +146,7 @@ def _sample_morph(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1
     return torch.cat([link_twists.unsqueeze(-1), link_lengths], dim=2)
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def _reject_morph(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batch_size"]:
     """
     Reject morphologies that have adjacent links that seem constantly in collision or that seem
@@ -169,7 +169,7 @@ def _reject_morph(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "b
     return rejected.cpu()
 
 
-@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def sample_morph(num_robots: int, dof: int) -> Float[Tensor, "num_robots {dof+1} 3"]:
     """
    Sample valid morphologies, encoded in modified Denavit-Hartenberg parameters (alpha, a, d).

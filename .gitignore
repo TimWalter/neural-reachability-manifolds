@@ -10,3 +10,7 @@ __pycache__/
 .idea
 
 trace.json
+
+*.pt
+*.pkl
+*.txt
