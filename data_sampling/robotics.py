@@ -99,7 +99,7 @@ def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"]) -> Float[T
     return manipulability
 
 
-# #@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def unique_indices(indices: Int[Tensor, "batch"],
                    manipulability: Float[Tensor, "batch"],
                    other: list[Float[Tensor, "batch *rest"]]) \
@@ -134,7 +134,7 @@ def unique_indices(indices: Int[Tensor, "batch"],
     return indices, manipulability, other
 
 
-# #@jaxtyped(typechecker=beartype)
+#@jaxtyped(typechecker=beartype)
 def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tensor, "batch 3"], r1: float,
                                     s2: Float[Tensor, "batch 3"], e2: Float[Tensor, "batch 3"], r2: float) \
         -> Float[Tensor, "batch"]:
