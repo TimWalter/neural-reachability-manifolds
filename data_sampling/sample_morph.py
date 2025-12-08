@@ -149,11 +149,14 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
     if analytically_solvable:
         if dof == 5:  # Special 5 DOF (Mixed Parallel/Intersecting Axes)
             axes_choice = torch.randint(0, 2, (batch_size,))
-            morph[axes_choice + 2, 1] = 0
-            morph[3 - axes_choice, 0] = 0
+            row_indices = torch.arange(batch_size).unsqueeze(-1)
+            morph[row_indices, axes_choice + 2, 1] = 0
+            morph[row_indices, 3 - axes_choice, 0] = 0
         elif dof == 6:  # Special 6 DOF (3 Parallel Inner Axes)
             axes_choice = torch.randint(2, 4, (batch_size,))
-            morph[axes_choice:axes_choice + 2, 0] = 0
+            indices_to_slice = axes_choice.unsqueeze(-1) + torch.arange(2)
+            row_indices = torch.arange(batch_size).unsqueeze(-1)
+            morph[row_indices, indices_to_slice, 0] = 0
         elif dof > 6:
             raise NotImplementedError("Analytically solvable sampling not implemented for DOF > 6")
 
