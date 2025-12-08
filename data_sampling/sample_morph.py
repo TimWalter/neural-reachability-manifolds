@@ -117,13 +117,14 @@ def _reject_link_length(link_length: Float[Tensor, "batch_size dofp1 2"]) -> Boo
 
 
 #@jaxtyped(typechecker=beartype)
-def _sample_morph(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1} 3"]:
+def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Float[Tensor, "batch_size {dof+1} 3"]:
     """
     Sample morphologies, encoded as MDH parameters (alpha, a, d), given their respective rejection criteria.
 
     Args:
         batch_size: number of robots to sample
         dof: degrees of freedom of the robots
+        analytically_solvable: whether to sample only analytically solvable robots
 
     Returns:
         MDH parameters (alpha, a, d) describing the robot morphology
@@ -143,7 +144,20 @@ def _sample_morph(batch_size: int, dof: int) -> Float[Tensor, "batch_size {dof+1
     while (mask := _reject_link_length(link_lengths)).any():
         link_lengths[mask] = _sample_link_length(link_types[mask])
 
-    return torch.cat([link_twists.unsqueeze(-1), link_lengths], dim=2)
+    morph = torch.cat([link_twists.unsqueeze(-1), link_lengths], dim=2)
+
+    if analytically_solvable:
+        if dof == 5:  # Special 5 DOF (Mixed Parallel/Intersecting Axes)
+            axes_choice = torch.randint(0, 2, (batch_size,))
+            morph[axes_choice + 2, 1] = 0
+            morph[3 - axes_choice, 0] = 0
+        elif dof == 6:  # Special 6 DOF (3 Parallel Inner Axes)
+            axes_choice = torch.randint(2, 4, (batch_size,))
+            morph[axes_choice:axes_choice + 2, 0] = 0
+        elif dof > 6:
+            raise NotImplementedError("Analytically solvable sampling not implemented for DOF > 6")
+
+    return morph
 
 
 #@jaxtyped(typechecker=beartype)
@@ -164,31 +178,26 @@ def _reject_morph(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "b
     poses = forward_kinematics(morph, joints)
     rejected = collision_check(morph, poses, radius=0.025).all(dim=1)
     jacobian = geometric_jacobian(poses)
-    rejected |= (yoshikawa_manipulability(jacobian) < 1e-4).all(dim=1)
+    rejected |= (yoshikawa_manipulability(jacobian, True) < 1e-4).all(dim=1)
 
     return rejected.cpu()
 
 
 #@jaxtyped(typechecker=beartype)
-def sample_morph(num_robots: int, dof: int) -> Float[Tensor, "num_robots {dof+1} 3"]:
+def sample_morph(num_robots: int, dof: int, analytically_solvable: bool) -> Float[Tensor, "num_robots {dof+1} 3"]:
     """
    Sample valid morphologies, encoded in modified Denavit-Hartenberg parameters (alpha, a, d).
 
    Args:
        num_robots: number of robots to sample
        dof: degrees of freedom of the robots
+       analytically_solvable: whether to sample only analytically solvable robots
 
    Returns:
        MDH parameters (alpha, a, d) describing the robot morphology
    """
-    morph = _sample_morph(num_robots, dof)
+    morph = _sample_morph(num_robots, dof, analytically_solvable)
     while (mask := _reject_morph(morph)).any():
-        morph[mask] = _sample_morph(mask.sum().item(), dof)
+        morph[mask] = _sample_morph(mask.sum().item(), dof, analytically_solvable)
 
     return morph
-
-
-if __name__ == "__main__":
-    robots = sample_morph(10, 5)
-    print(robots)
-    print(robots.shape)

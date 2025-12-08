@@ -84,18 +84,22 @@ def geometric_jacobian(poses: Float[Tensor, "*batch dofp1 4 4"]) -> Float[Tensor
 
 
 #@jaxtyped(typechecker=beartype)
-def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"]) -> Float[Tensor, "*batch"]:
+def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"], soft: bool = False) -> Float[Tensor, "*batch"]:
     """
     Computes the Yoshikawa manipulability index using the SVD of the Jacobian.
 
     Args:
         jacobian: Geometric Jacobians for each robot configuration.
+        soft: If true assume workspace dimension is equal to dof.
 
     Returns:
         Manipulability index.
     """
-    manipulability = torch.sqrt(torch.det(torch.matmul(jacobian, jacobian.transpose(-1, -2))).abs())
-    # .abs() protects against tiny negative floating point errors
+    if soft and jacobian.shape[-1] < 6:
+        _, singular_values, _ = torch.linalg.svd(jacobian)
+        manipulability = torch.prod(singular_values[..., : min(6, jacobian.shape[-1])], dim=-1)
+    else:
+        manipulability = torch.sqrt(torch.det(torch.matmul(jacobian, jacobian.transpose(-1, -2))).abs())
     return manipulability
 
 
