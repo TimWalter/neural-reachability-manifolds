@@ -7,7 +7,7 @@ from jaxtyping import Float, jaxtyped, Int
 import data_sampling.r3 as r3
 import data_sampling.so3 as so3
 from data_sampling.orientation_representations import rotation_matrix_to_cont
-
+from scipy.spatial.transform import Rotation
 
 #@jaxtyped(typechecker=beartype)
 def distance(x1: Float[Tensor, "*batch 4 4"], x2: Float[Tensor, "*batch 4 4"]) -> Float[Tensor, "*batch 1"]:
@@ -116,3 +116,28 @@ def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 12"]:
 
     nn = _combine_index(nn_r3, nn_so3)
     return nn
+
+
+#@jaxtyped(typechecker=beartype)
+def random(num_samples: int) -> Float[Tensor, "num_samples 4 4"]:
+    """
+    Sample random poses uniformly from SE(3).
+
+    Args:
+        num_samples: Number of samples to generate.
+
+    Returns:
+        Random poses.
+    """
+    translation = torch.randn(num_samples, 3)
+    translation /= torch.norm(translation, dim=1, keepdim=True)
+    translation *= torch.pow(torch.rand(num_samples, 1), 1.0 / 3)
+
+    quaternion = torch.randn(num_samples, 4)
+    quaternion = quaternion / torch.norm(quaternion, dim=1, keepdim=True)
+    rotation = Rotation.from_quat(quaternion).as_matrix()
+
+    pose = torch.eye(4).repeat(num_samples, 1, 1)
+    pose[:, :3, :3] = rotation
+    pose[:, :3, 3] = translation
+    return pose
