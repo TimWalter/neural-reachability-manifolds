@@ -6,7 +6,7 @@ from beartype import beartype
 from jaxtyping import Float, Int, jaxtyped
 
 from scipy.spatial.transform import Rotation
-from data_sampling.orientation_representations import rotation_matrix_to_rotation_vector
+from data_sampling.representations import rotation_matrix_to_rotation_vector
 
 
 
@@ -155,3 +155,20 @@ if nn_path.exists():
 else:
     _NN = _generate_nn(_CELLS)
     torch.save(_NN, nn_path)
+
+#@jaxtyped(typechecker=beartype)
+def random(num_samples: int) -> Float[Tensor, "num_samples 3 3"]:
+    """
+    Sample random orientations uniformly from SO(3).
+
+    Args:
+        num_samples: Number of samples to generate.
+
+    Returns:
+        Random orientations.
+    """
+    quaternion = torch.randn(num_samples, 4)
+    quaternion = quaternion / torch.norm(quaternion, dim=1, keepdim=True)
+    rotation = Rotation.from_quat(quaternion).as_matrix()
+
+    return rotation

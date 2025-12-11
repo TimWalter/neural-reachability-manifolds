@@ -50,7 +50,7 @@ def index(position: Float[Tensor, "*batch 3"]) -> Int[Tensor, "*batch"]:
     Returns:
         Cell index
     """
-    indices = torch.floor((position + 1.0) / 2.0 * N_DIV).to(torch.int32)
+    indices = torch.floor((position + 1.0) / 2.0 * N_DIV).to(torch.int64)
     indices = torch.clamp(indices, 0, N_DIV - 1)
     return _combine_index(indices[..., 0], indices[..., 1], indices[..., 2])
 
@@ -98,3 +98,20 @@ def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
     nn[z != 0, 5] -= N_DIV * N_DIV  # -z
 
     return nn
+
+#@jaxtyped(typechecker=beartype)
+def random(num_samples: int) -> Float[Tensor, "num_samples 3"]:
+    """
+    Sample random positions uniformly from R3.
+
+    Args:
+        num_samples: Number of samples to generate.
+
+    Returns:
+        Random positions.
+    """
+    translation = torch.randn(num_samples, 3)
+    translation /= torch.norm(translation, dim=1, keepdim=True)
+    translation *= torch.pow(torch.rand(num_samples, 1), 1.0 / 3)
+
+    return translation

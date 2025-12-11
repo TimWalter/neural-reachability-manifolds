@@ -6,7 +6,7 @@ from jaxtyping import Float, jaxtyped, Int
 
 import data_sampling.r3 as r3
 import data_sampling.so3 as so3
-from data_sampling.orientation_representations import rotation_matrix_to_cont
+from data_sampling.representations import rotation_matrix_to_continuous
 from scipy.spatial.transform import Rotation
 
 #@jaxtyped(typechecker=beartype)
@@ -91,7 +91,7 @@ def cell_vec(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 9"]:
         Cell pose vectorized.
     """
     r3_index, so3_index = _split_index(index)
-    return torch.cat([r3.cell(r3_index), rotation_matrix_to_cont(so3.cell(so3_index))], dim=-1)
+    return torch.cat([r3.cell(r3_index), rotation_matrix_to_continuous(so3.cell(so3_index))], dim=-1)
 
 
 #@jaxtyped(typechecker=beartype)
@@ -129,15 +129,7 @@ def random(num_samples: int) -> Float[Tensor, "num_samples 4 4"]:
     Returns:
         Random poses.
     """
-    translation = torch.randn(num_samples, 3)
-    translation /= torch.norm(translation, dim=1, keepdim=True)
-    translation *= torch.pow(torch.rand(num_samples, 1), 1.0 / 3)
-
-    quaternion = torch.randn(num_samples, 4)
-    quaternion = quaternion / torch.norm(quaternion, dim=1, keepdim=True)
-    rotation = Rotation.from_quat(quaternion).as_matrix()
-
     pose = torch.eye(4).repeat(num_samples, 1, 1)
-    pose[:, :3, :3] = rotation
-    pose[:, :3, 3] = translation
+    pose[:, :3, :3] = so3.random(num_samples)
+    pose[:, :3, 3] = r3.random(num_samples)
     return pose
