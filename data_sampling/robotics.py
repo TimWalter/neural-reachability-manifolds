@@ -278,7 +278,7 @@ def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
     try:
         joints, manipulability = analytical_inverse_kinematics(mdh, poses)
     except RuntimeError as e:
-        print("Not analytically solvable, falling back numerical IK")
+        print(f"{e} \n Falling back numerical IK.")
         joints, manipulability = numerical_inverse_kinematics(mdh, poses)
 
     return joints, manipulability
@@ -312,7 +312,10 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
     solutions = eaik_bot.IK_batched(poses.numpy())
     joints = [sol.Q for sol in solutions if sol.num_solutions() != 0]
     if not joints:
-        raise RuntimeError("No analytical IK solutions found for any pose.")
+        full_joints = torch.zeros((*poses.shape[:-2], mdh.shape[0], 1), device=mdh.device)
+        full_manipulability = -torch.ones((*poses.shape[:-2],), device=mdh.device)
+
+        return full_joints, full_manipulability
     joints = np.concat(joints, axis=0)
     joints = torch.from_numpy(joints).float().unsqueeze(2).to(mdh.device)
     pose_indices = torch.cat(
