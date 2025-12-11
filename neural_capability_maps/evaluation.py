@@ -4,8 +4,8 @@ import wandb
 import torch
 import argparse
 
-from model import ReachabilityClassifierLSTM as Model
-from dataset import Dataset
+from model import ReachabilityClassifier
+from dataset import SingleDataset
 from tqdm import tqdm
 from pathlib import Path
 
@@ -15,9 +15,9 @@ def main(model_folder: str, model_hyperparameter: dict, **kwargs):
 
     run = wandb.init(project="Capability Maps", config={"model": model_folder}, group="eval_reachability_classifier")
 
-    test_set = Dataset(Path(__file__).parent.parent / 'data' / 'test', 10_000, False, False)
+    test_set = SingleDataset(Path(__file__).parent.parent / 'data' / 'train', 10_000, False, False)
 
-    model = Model(**model_hyperparameter).to(device)
+    model = ReachabilityClassifier("lstm", **model_hyperparameter).to(device)
     model.load_state_dict(torch.load(next(Path(model_folder).glob('*.pth')), map_location=device))
 
     loss_function = torch.nn.BCELoss(reduction='mean')
@@ -60,7 +60,7 @@ def main(model_folder: str, model_hyperparameter: dict, **kwargs):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_id", type=int, default=650)
+    parser.add_argument("--model_id", type=int, default=701)
     args = parser.parse_args()
 
     model_dir = Path(__file__).parent.parent / "trained_models"
