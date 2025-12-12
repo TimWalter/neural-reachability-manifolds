@@ -25,22 +25,6 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
 
 
 #@jaxtyped(typechecker=beartype)
-def _reject_link_type(link_type: Int[Tensor, "batch_size dofp1"]) -> Bool[Tensor, "batch_size"]:
-    """
-    Reject link type that have three consecutive intersecting axes
-    (i.e., a_i=0, a_{i+1}=0, a_{i+2}=0)
-
-    Args:
-        link_type: Link types to check
-
-    Returns:
-        Mask of rejected link types
-    """
-    rejected = ((link_type[:, :-2] == 1) & (link_type[:, 1:-1] == 1) & (link_type[:, 2:] == 1)).any(dim=1)
-    return rejected
-
-
-#@jaxtyped(typechecker=beartype)
 def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tensor, "batch_size dofp1"]:
     """
     Sample link twist angles (alphas) uniformly from {-pi/2, 0, pi/2}
@@ -131,8 +115,6 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
     """
     # 1. Sample link types
     link_types = _sample_link_type(batch_size, dof)
-    while (mask := _reject_link_type(link_types)).any():
-        link_types[mask] = _sample_link_type(mask.sum().item(), dof)
 
     # 2. Sample alphas
     link_twists = _sample_link_twist(link_types)
