@@ -9,6 +9,7 @@ from data_sampling.autotune_batch_size import get_batch_size
 from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics
 
 import data_sampling.se3 as se3
+import data_sampling.so3 as so3
 
 torch.set_float32_matmul_precision('high')
 
@@ -32,10 +33,7 @@ def sample_joints(batch_size: int, dof: int) -> Float[Tensor, "{batch_size} {dof
 
 
 # @jaxtyped(typechecker=beartype)
-def workload(batch_size: int, morph: Float[Tensor, "dof 3"]) -> tuple[
-    Int[Tensor, "n_pos_cells"],
-    Int[Tensor, "n_neg_cells"]
-]:
+def workload(batch_size: int, morph: Float[Tensor, "dof 3"]) -> Int[Tensor, "n_cells"]:
     """
     Computes one batch of the capability map estimation.
     Args:
@@ -43,19 +41,19 @@ def workload(batch_size: int, morph: Float[Tensor, "dof 3"]) -> tuple[
         morph: MDH parameters encoding the robot geometry
 
     Returns:
-        Cell indices and self-collision flags for each sample in the batch
+        Cell indices of reachable cells
+
+    Notes:
+        Cells with self-collisions are not necessarily unreachable, as the max operator is applied for a pose on all
+        joints configurations
     """
     new_joints = sample_joints(batch_size, morph.shape[0] - 1)
     new_poses = forward_kinematics(morph.unsqueeze(0).expand(batch_size, -1, -1), new_joints.unsqueeze(-1))
     self_collision = collision_check(morph.unsqueeze(0).expand(new_poses.shape[0], -1, -1), new_poses)
 
-    new_cell_indices = se3.index(new_poses[:, -1, :, :])
+    new_cell_indices = se3.index(new_poses[:, -1, :, :][~self_collision])
 
-    pos_indices = new_cell_indices[~self_collision].unique()
-    neg_indices = new_cell_indices[self_collision].unique()
-    neg_indices = neg_indices[~torch.isin(neg_indices, pos_indices)]
-
-    return pos_indices, neg_indices
+    return new_cell_indices
 
 
 compiled_workload = torch.compile(workload)
@@ -78,7 +76,6 @@ def estimate_workspace(morph: Float[Tensor, "dofp1 3"]) -> tuple[
     morph = morph.to("cuda")
 
     pos_indices = torch.empty(0, dtype=torch.int64, device="cuda")
-    neg_indices = torch.empty(0, dtype=torch.int64, device="cuda")
 
     args = (morph,)
     batch_size = get_batch_size(morph.device, workload, args, safety=0.5)
@@ -87,21 +84,17 @@ def estimate_workspace(morph: Float[Tensor, "dofp1 3"]) -> tuple[
     newly_filled_cells = 0
 
     while (newly_filled_cells == 0 and filled_cells == 0) or newly_filled_cells / filled_cells > 1e-3:
-        new_pos_indices, new_neg_indices = workload(batch_size, *args)
-
-        new_neg_indices = new_neg_indices[~torch.isin(new_neg_indices, pos_indices)]
+        new_pos_indices = workload(batch_size, *args)
 
         pos_indices = torch.cat([pos_indices, new_pos_indices]).unique()
-        neg_indices = torch.cat([neg_indices, new_neg_indices]).unique()
 
-        newly_filled_cells = len(pos_indices) + len(neg_indices) - filled_cells
+        newly_filled_cells = len(pos_indices) - filled_cells
         filled_cells += newly_filled_cells
 
     pos_indices = pos_indices.cpu()
-    neg_indices = neg_indices.cpu()
 
     # Boundary as negative samples
-    neg_indices = torch.cat([se3.nn(pos_indices).flatten(), neg_indices]).unique()
+    neg_indices = se3.nn(pos_indices).flatten().unique()
     neg_indices = neg_indices[~torch.isin(neg_indices, pos_indices)]
 
     # Morphological gradient on positive indices
@@ -123,6 +116,9 @@ def create_index(poses: Float[Tensor, "N 4 4"]) -> faiss.IndexIVFFlat:
         poses: SE3 poses
     Returns:
         faiss index
+
+    Notes:
+        Since only the Euclidean distance is implemented, we do ANN search only in regard to the position.
     """
     poses_embed = poses[:, :3, 3].contiguous()
 
@@ -143,10 +139,10 @@ def predict(index: faiss.Index,
             train_labels: Float[Tensor, "N"],
             train_poses: Float[Tensor, "N 4 4"],
             query_poses: Float[Tensor, "batch 4 4"],
-            k: int = 100) -> Float[Tensor, "batch"]:
+            k: int = so3.N_CELLS) -> Float[Tensor, "batch"]:
     """
-    Query FAISS index and perform interpolation between the min(13, k) nearest neighbours. We usually oversample
-    the nearest neighbours since the l2 distance is only a proxy for the actual SE3 distance.
+    Query FAISS index and perform interpolation between the min(13, k) nearest neighbours. We oversample
+    the nearest neighbours since the l2 distance on the positions is only a proxy for the actual SE3 distance.
 
     Args:
         index: faiss index

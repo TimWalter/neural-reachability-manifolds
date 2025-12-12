@@ -138,7 +138,7 @@ def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 
     nn = distances.argsort(dim=-1)[:, 1:7]  # Exclude self (first column)
     return nn
 
-LEVEL = 3
+LEVEL = 1
 
 MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792 ,3: 0.1654}[LEVEL]
 _CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
