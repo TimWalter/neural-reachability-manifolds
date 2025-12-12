@@ -5,6 +5,7 @@ from jaxtyping import jaxtyped, Float, Bool
 from beartype import beartype
 import seaborn as sns
 
+
 def visualise_predictions(poses, pred, gt):
     pred = torch.nn.Sigmoid()(pred) > 0.5
     gt = gt.bool()
@@ -18,12 +19,14 @@ def visualise_predictions(poses, pred, gt):
               [true_positives, true_negatives, false_positives, false_negatives],
               names=['True Positives', 'True Negatives', 'False Positives', 'False Negatives'])
 
+
 def visualise_workspace(poses, labels):
     visualise([poses, poses],
               [labels, ~labels],
               names=['Reachable', 'Unreachable'])
 
-#@jaxtyped(typechecker=beartype)
+
+# @jaxtyped(typechecker=beartype)
 def visualise(
         poses: list[Float[Tensor, "batch 4 4"]] | Float[Tensor, "batch 4 4"],
         labels: list[Bool[Tensor, "batch"]] | Bool[Tensor, "batch"],
@@ -94,6 +97,8 @@ def visualise(
         color = colors[i]
         name = names[i]
 
+        legend_group = f"group_{i}"
+
         traces.append(go.Scatter3d(
             x=plot_data[:, 0],
             y=plot_data[:, 1],
@@ -101,6 +106,7 @@ def visualise(
             mode='lines',
             line=dict(color=color, width=2),
             name=name,
+            legendgroup=legend_group,
             showlegend=True
         ))
 
@@ -111,6 +117,7 @@ def visualise(
             z=origins[:, 2],
             mode='markers',
             marker=dict(size=2, color=color),
+            legendgroup=legend_group,
             showlegend=False,
             hoverinfo='skip'
         ))
@@ -132,7 +139,7 @@ def visualise(
                 range=[-1, 1]
             ),
         ),
-        legend=dict(itemsizing='constant'),
+        legend=dict(itemsizing='constant', groupclick='togglegroup'),
         paper_bgcolor='white', width=1000, height=1000,
     )
     fig.show()
