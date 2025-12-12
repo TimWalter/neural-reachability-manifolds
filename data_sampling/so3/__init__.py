@@ -138,18 +138,20 @@ def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 
     nn = distances.argsort(dim=-1)[:, 1:7]  # Exclude self (first column)
     return nn
 
-MAX_DISTANCE_BETWEEN_CELLS = 0.1654
-_CELLS = torch.load(Path(__file__).parent / "cells.pt", map_location="cpu")  # From RWA
+LEVEL = 3
+
+MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792 ,3: 0.1654}[LEVEL]
+_CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
 N_CELLS = _CELLS.shape[0]
 
-lookup_path = Path(__file__).parent / "lookup.pt"
+lookup_path = Path(__file__).parent / f"lookup_{LEVEL}.pt"
 if lookup_path.exists():
     _LOOKUP = torch.load(lookup_path, map_location="cpu")
 else:
     _LOOKUP = _generate_lookup(128, _CELLS)
     torch.save(_LOOKUP, lookup_path)
 
-nn_path = Path(__file__).parent / "nearest_neighbours.pt"
+nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"
 if nn_path.exists():
     _NN = torch.load(nn_path, map_location="cpu")
 else:
