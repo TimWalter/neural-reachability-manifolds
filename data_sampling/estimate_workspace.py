@@ -15,20 +15,18 @@ torch.set_float32_matmul_precision('high')
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_joints(batch_size: int, dof: int) -> Float[Tensor, "{batch_size} {dof+1}"]:
+def sample_joints(batch_size: int, dofp1: int) -> Float[Tensor, "{batch_size} {dof+1}"]:
     """
     sample random joint configurations for the robot.
 
     args:
         batch_size: Number of joint configurations to sample
-        dof: Degrees of freedom of the robot
+        dofp1: Degrees of freedom of the robot + 1
 
     returns:
         Newly sampled joint configurations
     """
-    joints = torch.cat([2 * torch.pi * torch.rand(batch_size, dof, device="cuda") - torch.pi,
-                        torch.zeros(batch_size, 1, device="cuda")], dim=1)
-
+    joints = 2 * torch.pi * torch.rand(batch_size, dofp1, device="cuda") - torch.pi
     return joints
 
 
@@ -47,7 +45,7 @@ def workload(batch_size: int, morph: Float[Tensor, "dof 3"]) -> Int[Tensor, "n_c
         Cells with self-collisions are not necessarily unreachable, as the max operator is applied for a pose on all
         joints configurations
     """
-    new_joints = sample_joints(batch_size, morph.shape[0] - 1)
+    new_joints = sample_joints(batch_size, morph.shape[0])
     new_poses = forward_kinematics(morph.unsqueeze(0).expand(batch_size, -1, -1), new_joints.unsqueeze(-1))
     self_collision = collision_check(morph.unsqueeze(0).expand(new_poses.shape[0], -1, -1), new_poses)
 
@@ -92,6 +90,13 @@ def estimate_workspace(morph: Float[Tensor, "dofp1 3"]) -> tuple[
         filled_cells += newly_filled_cells
 
     pos_indices = pos_indices.cpu()
+
+    # neg_indices = torch.empty(0, dtype=torch.int64)
+    # while neg_indices.shape[0] != pos_indices.shape[0]:
+    #     neg_indices = torch.cat([neg_indices, torch.randint(0, se3.N_CELLS, (2*(pos_indices.shape[0] - neg_indices.shape[0]),))])
+    #     neg_indices = neg_indices.unique()
+    #     neg_indices = neg_indices[~torch.isin(neg_indices, pos_indices)]
+    #     neg_indices = neg_indices[:pos_indices.shape[0]]
 
     # Boundary as negative samples
     neg_indices = se3.nn(pos_indices).flatten().unique()
@@ -217,6 +222,6 @@ def estimate_workspace_analytically(morph: Float[Tensor, "dofp1 3"], num_samples
 if __name__ == "__main__":
     from data_sampling.sample_morph import sample_morph
     torch.manual_seed(0)
-    morphs = [sample_morph(1, i, True)[0] for i in range(1, 7)]
+    morphs = [sample_morph(1, i, False)[0] for i in range(2, 7)]
 
     labels, cell_indices = estimate_workspace(morphs[0])
