@@ -36,9 +36,8 @@ def visualise(
     simultaneously.
 
     Representation:
-    - Origin: Position
-    - Long Line: Z-axis (Approach vector)
-    - Short Line: X-axis (indicates Roll/Orientation)
+    - Origin: End effector position
+    - Line: Points backward along -Z axis (direction arm came from)
     - Color: Class Label (e.g., TP/FP or Reachable/Unreachable)
 
     Args:
@@ -51,11 +50,10 @@ def visualise(
         poses = [poses]
     if isinstance(labels, Tensor):
         labels = [labels]
-
-    colors = sns.color_palette("colorblind", n_colors=len(names)).as_hex()
-
     if names is None:
         names = [f"Set {i}" for i in range(len(poses))]
+
+    colors = sns.color_palette("colorblind", n_colors=len(names)).as_hex()
 
     traces = []
 
@@ -69,29 +67,19 @@ def visualise(
             continue
 
         # 1. Extract Geometry
-        # Origins (batch, 3)
         origins = subset_poses[:, :3, 3]
-        # Rotation columns: X (batch, 3), Z (batch, 3)
-        x_axes = subset_poses[:, :3, 0]
         z_axes = subset_poses[:, :3, 2]
 
-        # 2. Calculate Endpoints for the Glyphs
-        # Z-leg end point (Long)
-        z_ends = origins - (z_axes * 0.05)
-        # X-leg end point (Short, starts from origin)
-        x_ends = origins + (x_axes * (0.05 * 0.3))
+        # Calculate start points (pointing back toward robot base)
+        z_starts = origins - (z_axes * 0.025)
 
-        # 3. Build the Line Segments for Plotly
-        l_shapes = torch.stack([x_ends, origins, z_ends], dim=1)
 
-        # Create a separator array of NaNs
-        nans = torch.full((l_shapes.shape[0], 1, 3), float('nan'))
+        # Build line segments: [start, origin, NaN]
+        line_segments = torch.stack([z_starts, origins], dim=1)
+        # Add NaN separators
+        nans = torch.full((line_segments.shape[0], 1, 3), float('nan'))
+        with_nans = torch.cat([line_segments, nans], dim=1)
 
-        # Concatenate [X_end, Origin, Z_end, NaN]
-        # Shape becomes (N, 4, 3)
-        with_nans = torch.cat([l_shapes, nans], dim=1)
-
-        # Flatten to (N*4, 3) -> X, Y, Z coordinates
         plot_data = with_nans.reshape(-1, 3).numpy()
 
         color = colors[i]
