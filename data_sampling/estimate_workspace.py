@@ -26,7 +26,9 @@ def sample_joints(batch_size: int, dofp1: int) -> Float[Tensor, "{batch_size} {d
     returns:
         Newly sampled joint configurations
     """
-    joints = 2 * torch.pi * torch.rand(batch_size, dofp1, device="cuda") - torch.pi
+    joints = torch.cat([2 * torch.pi * torch.rand(batch_size, dofp1 - 1, device="cuda") - torch.pi,
+                        torch.zeros(batch_size, 1, device="cuda")], dim=1)
+
     return joints
 
 
