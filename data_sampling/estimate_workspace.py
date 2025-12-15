@@ -103,8 +103,8 @@ def estimate_workspace(morph: Float[Tensor, "dofp1 3"]) -> tuple[
     neg_indices = neg_indices[~torch.isin(neg_indices, pos_indices)]
 
     # Morphological gradient on positive indices
-    #neighbours = se3.nn(pos_indices)
-    #pos_indices = pos_indices[~torch.isin(neighbours, pos_indices.unsqueeze(0)).all(dim=1)]
+    # neighbours = se3.nn(pos_indices)
+    # pos_indices = pos_indices[~torch.isin(neighbours, pos_indices.unsqueeze(0)).all(dim=1)]
 
     cell_indices = torch.cat([pos_indices, neg_indices], dim=0)
     labels = torch.cat([torch.ones_like(pos_indices), torch.zeros_like(neg_indices)], dim=0)
@@ -207,21 +207,25 @@ def estimate_workspace_analytically(morph: Float[Tensor, "dofp1 3"], num_samples
     # Generate reachable samples via FK
     morph = morph.to("cuda")
     while idx != num_samples:
-        num_c = num_samples - idx
-        joints = sample_joints(num_c, morph.shape[0] - 1)
+        num_c = 2 * (num_samples - idx)
+        joints = sample_joints(num_c, morph.shape[0])
         reached_poses = forward_kinematics(morph.unsqueeze(0).expand(num_c, -1, -1), joints.unsqueeze(-1))
         self_collision = collision_check(morph.unsqueeze(0).expand(reached_poses.shape[0], -1, -1), reached_poses)
         reached_poses = reached_poses[~self_collision]
 
-        added_c = (~self_collision).sum().cpu()
+        added_c = min((~self_collision).sum().cpu(), num_samples - idx)
+        reached_poses = reached_poses[:added_c]
+
         poses[idx:idx + added_c] = reached_poses[:, -1, :, :].cpu()
         labels[idx:idx + added_c] = torch.ones(reached_poses.shape[0])
         idx += added_c
     return labels.unsqueeze(1), poses
 
+
 if __name__ == "__main__":
     from data_sampling.sample_morph import sample_morph
-    torch.manual_seed(0)
-    morphs = [sample_morph(1, i, False)[0] for i in range(2, 7)]
 
-    labels, cell_indices = estimate_workspace(morphs[0])
+    torch.manual_seed(0)
+    morphs = [sample_morph(1, i, True)[0] for i in range(1, 7)]
+
+    labels, cell_indices = estimate_workspace_analytically(morphs[4], 100_000)
