@@ -212,35 +212,30 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     *batch_shape, dof, _ = mdh.shape
     device = mdh.device
 
-    # Extract joint positions and local axes in world frame
-    origin = poses[..., :3, 3]  # (*batch, dof, 3)
-    x_axis = poses[..., :3, 0]
-    z_axis = poses[..., :3, 2]
+    # Prepend the Identity matrix (Base Frame 0) to poses (poses currently contains [T1, T2, ..., TN]. We need [T0, T1, ..., TN].)
+    identity = torch.eye(4, device=device).expand(*batch_shape, 1, 4, 4)
+    poses = torch.cat([identity, poses], dim=-3)
 
-    # DH parameters
-    a = mdh[..., 1]
-    d = mdh[..., 2]
+    # Starting point of the first capsule is the pose from base
+    s_a = poses[..., :-1,:3, 3]
+    # End point of the second capsule is the pose after
+    e_d = poses[..., 1:,:3, 3]
+    # The middle point is given by an a-long translation along the current x-axis
+    x_axis = poses[...,:-1, :3, 0]
+    a = mdh[..., 1].unsqueeze(-1)
+    e_a = s_d = s_a + a * x_axis
 
-    # Capsule endpoints
-    s_a = origin
-    e_a = origin + a.unsqueeze(-1) * x_axis
-    s_d = origin
-    e_d = origin + d.unsqueeze(-1) * z_axis
-
-    # Stack both capsule families
-    s_all = torch.cat([s_a, s_d], dim=-2)  # (*batch, 2*dof, 3)
-    e_all = torch.cat([e_a, e_d], dim=-2)
+    # Assemble the chain (stack+flatten essentially zips such that s_a_1, s_d_1, s_a_2, s_d_2, ..)
+    s_all = torch.stack([s_a, s_d], dim=-2).flatten(-3, -2)
+    e_all = torch.stack([e_a, e_d], dim=-2).flatten(-3, -2)
 
     # Capsule pair combinations
     i_idx, j_idx = torch.triu_indices(2 * dof, 2 * dof, offset=1, device=device)
 
-    # Skip capsule pairs from the same joint or adjacent joint
-    same_joint_mask = (i_idx % dof == j_idx % dof)
-    adjacent_joint_mask = (torch.abs((i_idx // dof) - (j_idx // dof)) == 1) & \
-                          ((i_idx % dof) + (j_idx % dof) == dof)
-    mask = same_joint_mask | adjacent_joint_mask
-    i_idx = i_idx[~mask]
-    j_idx = j_idx[~mask]
+    # Skip capsule pairs if they are next to each other in the kinematic chain
+    adjacent = j_idx - i_idx == 1
+    i_idx = i_idx[~adjacent]
+    j_idx = j_idx[~adjacent]
     num_pairs = len(i_idx)
 
     # Gather capsule endpoints
@@ -252,8 +247,13 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     # Compute signed distances
     distances = v_signed_distance(s1, e1, radius, s2, e2, radius)  # (batch_flat, num_pairs)
 
+    # Ignore distances between capsules that are next to each other due to a=0 or d=0
+    missing_capsule = (s_all == e_all).all(dim=-1).flatten(0, -2)
+    adjacent = missing_capsule[..., i_idx+1] & (j_idx - i_idx == 2)
+    adjacent |= missing_capsule[..., i_idx+1] & missing_capsule[..., i_idx+2] & (j_idx - i_idx == 3)
+
     # Collision if any signed distance < 0 in that configuration
-    collision_flags = (distances < 0).any(dim=-1)
+    collision_flags = ((distances <0) & (~adjacent)).any(dim=-1)
 
     return collision_flags.reshape(batch_shape)
 
