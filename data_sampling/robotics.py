@@ -215,7 +215,7 @@ def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     # End point of the second capsule is the pose after
     e_a = poses[..., 1:,:3, 3]
     # The middle point is given by a d-long translation along the current z-axis
-    z_axis = poses[...,:-1, :3, 2]
+    z_axis = poses[...,1:, :3, 2]
     d = mdh[..., 2].unsqueeze(-1)
     e_d = s_a = s_d + d * z_axis
 
