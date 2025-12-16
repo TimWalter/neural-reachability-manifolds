@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import numpy as np
 from beartype import beartype
@@ -193,6 +195,36 @@ def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tens
 
 v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, None, 0, 0, None))
 
+#@jaxtyped(typechecker=beartype)
+def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
+                 poses: Optional[Float[torch.Tensor, "*batch dofp1 4 4"]] = None) -> tuple[
+    Float[torch.Tensor, "*batch dofp1 3"],
+    Float[torch.Tensor, "*batch dofp1 3"],
+]:
+    *batch_shape, dof, _ = mdh.shape
+    device = mdh.device
+
+    # Prepend the Identity matrix (Base Frame 0) to poses (poses currently contains [T1, T2, ..., TN]. We need [T0, T1, ..., TN].)
+    identity = torch.eye(4, device=device).expand(*batch_shape, 1, 4, 4)
+    if poses is None:
+        poses = forward_kinematics(mdh, torch.zeros((*batch_shape,dof, 1), device=device))
+    poses = torch.cat([identity, poses], dim=-3)
+
+    # Starting point of the first capsule is the pose from base
+    s_d = poses[..., :-1,:3, 3]
+    # End point of the second capsule is the pose after
+    e_a = poses[..., 1:,:3, 3]
+    # The middle point is given by a d-long translation along the current z-axis
+    z_axis = poses[...,:-1, :3, 2]
+    d = mdh[..., 2].unsqueeze(-1)
+    e_d = s_a = s_d + d * z_axis
+
+    # Assemble the chain (stack+flatten essentially zips such that s_a_1, s_d_1, s_a_2, s_d_2, ..)
+    s_all = torch.stack([s_d, s_a], dim=-2).flatten(-3, -2)
+    e_all = torch.stack([e_d, e_a], dim=-2).flatten(-3, -2)
+
+    return s_all, e_all
+
 
 # #@jaxtyped(typechecker=beartype)
 def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
@@ -212,22 +244,7 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     *batch_shape, dof, _ = mdh.shape
     device = mdh.device
 
-    # Prepend the Identity matrix (Base Frame 0) to poses (poses currently contains [T1, T2, ..., TN]. We need [T0, T1, ..., TN].)
-    identity = torch.eye(4, device=device).expand(*batch_shape, 1, 4, 4)
-    poses = torch.cat([identity, poses], dim=-3)
-
-    # Starting point of the first capsule is the pose from base
-    s_a = poses[..., :-1,:3, 3]
-    # End point of the second capsule is the pose after
-    e_d = poses[..., 1:,:3, 3]
-    # The middle point is given by an a-long translation along the current x-axis
-    x_axis = poses[...,:-1, :3, 0]
-    a = mdh[..., 1].unsqueeze(-1)
-    e_a = s_d = s_a + a * x_axis
-
-    # Assemble the chain (stack+flatten essentially zips such that s_a_1, s_d_1, s_a_2, s_d_2, ..)
-    s_all = torch.stack([s_a, s_d], dim=-2).flatten(-3, -2)
-    e_all = torch.stack([e_a, e_d], dim=-2).flatten(-3, -2)
+    s_all, e_all = get_capsules(mdh, poses)
 
     # Capsule pair combinations
     i_idx, j_idx = torch.triu_indices(2 * dof, 2 * dof, offset=1, device=device)
@@ -251,6 +268,7 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     missing_capsule = (s_all == e_all).all(dim=-1).flatten(0, -2)
     adjacent = missing_capsule[..., i_idx+1] & (j_idx - i_idx == 2)
     adjacent |= missing_capsule[..., i_idx+1] & missing_capsule[..., i_idx+2] & (j_idx - i_idx == 3)
+    #exclude missing capsules altogether?
 
     # Collision if any signed distance < 0 in that configuration
     collision_flags = ((distances <0) & (~adjacent)).any(dim=-1)
