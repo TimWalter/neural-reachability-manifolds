@@ -21,7 +21,6 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
         Link type sampled uniformly
     """
     link_type = torch.randint(0, 3, size=(batch_size, dof + 1))
-    link_type[:, -1] = 1 # EEF always has link type 1
     return link_type
 
 
@@ -43,7 +42,6 @@ def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tens
 
     link_twist[link_type == 1] = link_twist_options[1 + (link_twist_choice[link_type == 1] > 1 / 2).to(torch.int64)]
 
-    link_twist[:, -1] = 0 # EEF only has d
     return link_twist
 
 
