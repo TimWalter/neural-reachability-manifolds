@@ -61,7 +61,7 @@ def visualise(
     if names is None:
         names = [f"Set {i}" for i in range(len(poses))]
 
-    colors = sns.color_palette("colorblind", n_colors=len(names)).as_hex()
+    colors = sns.color_palette("colorblind", n_colors=len(names)+1).as_hex()
 
     traces = []
 
@@ -127,24 +127,22 @@ def visualise(
             hoverinfo='skip'
         ))
 
-        # Show Robot schematically
-        legend_group_mdh = f"group_{i}_mdh"
-        s_all, e_all = get_capsules(mdh_batch)
-        segments = torch.stack([s_all, e_all], dim=1).cpu()
-        nans = torch.full((segments.shape[0], 1, 3), float('nan'))
-        segments_with_nans = torch.cat([segments, nans], dim=1)
-        robot_plot_data = segments_with_nans.reshape(-1, 3)
-        traces.append(go.Scatter3d(
-            x=robot_plot_data[:, 0],
-            y=robot_plot_data[:, 1],
-            z=robot_plot_data[:, 2],
-            mode='lines',
-            line=dict(color=color, width=8),
-            name=f"Robot ({names[i]})",
-            legendgroup=legend_group_mdh,
-            showlegend=True,
-            hoverinfo='skip'
-        ))
+    # Show Robot schematically
+    s_all, e_all = get_capsules(mdh[0])
+    segments = torch.stack([s_all, e_all], dim=1).cpu()
+    nans = torch.full((segments.shape[0], 1, 3), float('nan'))
+    segments_with_nans = torch.cat([segments, nans], dim=1)
+    robot_plot_data = segments_with_nans.reshape(-1, 3)
+    traces.append(go.Scatter3d(
+        x=robot_plot_data[:, 0],
+        y=robot_plot_data[:, 1],
+        z=robot_plot_data[:, 2],
+        mode='lines',
+        line=dict(color=colors[-1], width=8),
+        name=f"Robot",
+        showlegend=True,
+        hoverinfo='skip'
+    ))
 
     fig = go.Figure(data=traces)
     fig.update_layout(
