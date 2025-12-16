@@ -1,4 +1,3 @@
-import jax
 import torch
 from beartype import beartype
 from jaxtyping import Float, jaxtyped
@@ -19,6 +18,7 @@ def homogeneous_to_vector(homogeneous: Float[Tensor, "*batch 4 4"]) -> Float[Ten
     """
     return torch.cat([homogeneous[..., :3, 3], rotation_matrix_to_continuous(homogeneous[..., :3, :3])], dim=-1)
 
+
 def vector_to_homogeneous(vec: Float[Tensor, "*batch 9"]) -> Float[Tensor, "*batch 4 4"]:
     """
     Convert 9D vector representation to 4x4 homogeneous transformation matrix
@@ -36,6 +36,7 @@ def vector_to_homogeneous(vec: Float[Tensor, "*batch 9"]) -> Float[Tensor, "*bat
     homogeneous[..., :3, 3] = translation
     homogeneous[..., :3, :3] = continuous_to_rotation_matrix(rotation_cont)
     return homogeneous
+
 
 # @jaxtyped(typechecker=beartype)
 def rotation_matrix_to_continuous(rotation_matrix: Float[Tensor, "*batch 3 3"]) -> Float[Tensor, "*batch 6"]:
@@ -68,13 +69,7 @@ def continuous_to_rotation_matrix(ml: Float[Tensor, "*batch 6"]) -> Float[Tensor
     return torch.stack([r1, r2, r3], dim=-1)
 
 
-# Jax is almost an order of magnitude faster than torch for this operation
-@jax.jit
-def rotation_matrix_to_rotation_vector_jax(rotation):
-    return Rotation.from_matrix(rotation, assume_valid=True).as_rotvec()
-
-
-@torch._dynamo.disable
+@torch.compile
 def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3"]) -> Float[Tensor, "batch 3"]:
     """
     Convert 3x3 rotation matrix to rotation vector (axis-angle representation).
@@ -85,5 +80,4 @@ def rotation_matrix_to_rotation_vector(rotation_matrix: Float[Tensor, "batch 3 3
     Returns:
         Rotation vector
     """
-    rotation_vector = rotation_matrix_to_rotation_vector_jax(jax.dlpack.from_dlpack(rotation_matrix.contiguous()))
-    return torch.from_dlpack(rotation_vector)
+    return Rotation.from_matrix(rotation_matrix, assume_valid=True).as_rotvec()
