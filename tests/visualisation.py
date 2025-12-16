@@ -5,8 +5,10 @@ from jaxtyping import jaxtyped, Float, Bool
 from beartype import beartype
 import seaborn as sns
 
+from data_sampling.robotics import transformation_matrix, get_capsules
 
-def visualise_predictions(poses, pred, gt):
+
+def visualise_predictions(mdh, poses, pred, gt):
     pred = torch.nn.Sigmoid()(pred) > 0.5
     gt = gt.bool()
 
@@ -15,19 +17,22 @@ def visualise_predictions(poses, pred, gt):
     false_positives = pred & ~gt
     false_negatives = ~pred & gt
 
-    visualise([poses, poses, poses, poses],
+    visualise([mdh, mdh, mdh, mdh],
+              [poses, poses, poses, poses],
               [true_positives, true_negatives, false_positives, false_negatives],
               names=['True Positives', 'True Negatives', 'False Positives', 'False Negatives'])
 
 
-def visualise_workspace(poses, labels):
-    visualise([poses, poses],
+def visualise_workspace(mdh, poses, labels):
+    visualise([mdh, mdh],
+              [poses, poses],
               [labels, ~labels],
               names=['Reachable', 'Unreachable'])
 
 
 # @jaxtyped(typechecker=beartype)
 def visualise(
+        mdh: list[Float[Tensor, "dofp1 3"]] | Float[Tensor, "dofp1 3"],
         poses: list[Float[Tensor, "batch 4 4"]] | Float[Tensor, "batch 4 4"],
         labels: list[Bool[Tensor, "batch"]] | Bool[Tensor, "batch"],
         names: list[str] = None):
@@ -37,7 +42,8 @@ def visualise(
 
     Representation:
     - Origin: End effector position
-    - Line: Points backward along -Z axis (direction arm came from)
+    - Long Line: Points backward along -Z axis (direction EEF came from)
+    - Short Line: X-axis (indicates Roll/Orientation)
     - Color: Class Label (e.g., TP/FP or Reachable/Unreachable)
 
     Args:
@@ -46,6 +52,8 @@ def visualise(
         names: Optional names for each set of poses for the legend.
     """
     # Normalise inputs to lists
+    if isinstance(mdh, Tensor):
+        mdh = [mdh]
     if isinstance(poses, Tensor):
         poses = [poses]
     if isinstance(labels, Tensor):
@@ -57,7 +65,8 @@ def visualise(
 
     traces = []
 
-    for i, (pose_batch, label_batch) in enumerate(zip(poses, labels)):
+    for i, (mdh_batch, pose_batch, label_batch) in enumerate(zip(mdh, poses, labels)):
+        mdh_batch = mdh_batch.cpu()
         pose_batch = pose_batch.cpu()
         label_batch = label_batch.cpu()
 
@@ -67,18 +76,26 @@ def visualise(
             continue
 
         # 1. Extract Geometry
+        inv_mat = torch.inverse(
+            transformation_matrix(mdh_batch[-1, 0:1], mdh_batch[-1, 1:2], mdh_batch[-1, 2:3], torch.zeros(1)))
+        prev_poses = subset_poses @ inv_mat
+
         origins = subset_poses[:, :3, 3]
-        z_axes = subset_poses[:, :3, 2]
+        z_axes = prev_poses[:, :3, 2]
+        x_axes = prev_poses[:, :3, 0]
+
+        a = mdh_batch[-1, 1]
+        d = mdh_batch[-1, 2]
 
         # Calculate start points (pointing back toward robot base)
-        z_starts = origins - (z_axes * 0.025)
-
+        x_ends = origins + (x_axes * 0.025 * (a / (a + d)))
+        z_ends = x_ends + (z_axes * 0.025 * (d / (a + d)))
 
         # Build line segments: [start, origin, NaN]
-        line_segments = torch.stack([z_starts, origins], dim=1)
+        l_shapes = torch.stack([x_ends, origins, x_ends, z_ends], dim=1)
         # Add NaN separators
-        nans = torch.full((line_segments.shape[0], 1, 3), float('nan'))
-        with_nans = torch.cat([line_segments, nans], dim=1)
+        nans = torch.full((l_shapes.shape[0], 1, 3), float('nan'))
+        with_nans = torch.cat([l_shapes, nans], dim=1)
 
         plot_data = with_nans.reshape(-1, 3).numpy()
 
@@ -110,6 +127,25 @@ def visualise(
             hoverinfo='skip'
         ))
 
+        # Show Robot schematically
+        legend_group_mdh = f"group_{i}_mdh"
+        s_all, e_all = get_capsules(mdh_batch)
+        segments = torch.stack([s_all, e_all], dim=1).cpu()
+        nans = torch.full((segments.shape[0], 1, 3), float('nan'))
+        segments_with_nans = torch.cat([segments, nans], dim=1)
+        robot_plot_data = segments_with_nans.reshape(-1, 3)
+        traces.append(go.Scatter3d(
+            x=robot_plot_data[:, 0],
+            y=robot_plot_data[:, 1],
+            z=robot_plot_data[:, 2],
+            mode='lines',
+            line=dict(color=color, width=8),
+            name=f"Robot ({names[i]})",
+            legendgroup=legend_group_mdh,
+            showlegend=True,
+            hoverinfo='skip'
+        ))
+
     fig = go.Figure(data=traces)
     fig.update_layout(
         scene=dict(
@@ -126,8 +162,19 @@ def visualise(
                 title='Z',
                 range=[-1, 1]
             ),
+            camera=dict(
+                eye=dict(x=1.2, y=1.2, z=1.2)  # Default is ~1.25; smaller = closer
+            )
         ),
-        legend=dict(itemsizing='constant', groupclick='togglegroup'),
+        legend=dict(orientation="h",  # Horizontal legend
+                    yanchor="bottom",
+                    y=1.02,  # Places legend above the plot
+                    xanchor="right",
+                    x=1,
+                    itemsizing='constant',
+                    groupclick='togglegroup',
+                    bgcolor='rgba(255,255,255,0.5)'  # Semi-transparent background
+                    ),
         paper_bgcolor='white', width=1000, height=1000,
     )
     fig.show()
