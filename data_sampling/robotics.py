@@ -9,12 +9,11 @@ from eaik.IK_Homogeneous import HomogeneousRobot
 from data_sampling.se3 import distance
 from scipy.spatial.transform import Rotation
 
-
 LINK_RADIUS = 0.025
 EPS = 1e-3
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def transformation_matrix(alpha: Float[Tensor, "*batch 1"], a: Float[Tensor, "*batch 1"], d: Float[Tensor, "*batch 1"],
                           theta: Float[Tensor, "*batch 1"]) -> Float[Tensor, "*batch 4 4"]:
     """
@@ -39,8 +38,7 @@ def transformation_matrix(alpha: Float[Tensor, "*batch 1"], a: Float[Tensor, "*b
                         torch.cat([zero, zero, zero, one], dim=-1)], dim=-2)
 
 
-
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def forward_kinematics(mdh: Float[Tensor, "*batch dofp1 3"],
                        theta: Float[Tensor, "*batch dofp1 1"]) -> Float[Tensor, "*batch dofp1 4 4"]:
     """
@@ -63,7 +61,7 @@ def forward_kinematics(mdh: Float[Tensor, "*batch dofp1 3"],
     return torch.cat(poses, dim=-3)
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def geometric_jacobian(poses: Float[Tensor, "*batch dofp1 4 4"]) -> Float[Tensor, "*batch 6 dof"]:
     """
     Compute the geometric Jacobian for revolute joints in the base frame.
@@ -85,7 +83,7 @@ def geometric_jacobian(poses: Float[Tensor, "*batch dofp1 4 4"]) -> Float[Tensor
     return jacobian
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"], soft: bool = False) -> Float[Tensor, "*batch"]:
     """
     Computes the Yoshikawa manipulability index using the SVD of the Jacobian.
@@ -105,7 +103,7 @@ def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"], soft: bool
     return manipulability
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def unique_indices(indices: Int[Tensor, "batch"],
                    manipulability: Float[Tensor, "batch"],
                    other: list[Float[Tensor, "batch *rest"]]) \
@@ -140,7 +138,7 @@ def unique_indices(indices: Int[Tensor, "batch"],
     return indices, manipulability, other
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tensor, "batch 3"], r1: float,
                                     s2: Float[Tensor, "batch 3"], e2: Float[Tensor, "batch 3"], r2: float) \
         -> Float[Tensor, "batch"]:
@@ -195,9 +193,11 @@ def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tens
 
 v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, None, 0, 0, None))
 
-#@jaxtyped(typechecker=beartype)
+
+# @jaxtyped(typechecker=beartype)
 def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
-                 poses: Optional[Float[torch.Tensor, "*batch dofp1 4 4"]] = None) -> tuple[
+                 poses: Optional[Float[torch.Tensor, "*batch dofp1 4 4"]] = None,
+                 joints: Optional[Float[torch.Tensor, "*batch dofp1 1"]] = None) -> tuple[
     Float[torch.Tensor, "*batch dofp1 3"],
     Float[torch.Tensor, "*batch dofp1 3"],
 ]:
@@ -207,22 +207,23 @@ def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     # Prepend the Identity matrix (Base Frame 0) to poses (poses currently contains [T1, T2, ..., TN]. We need [T0, T1, ..., TN].)
     identity = torch.eye(4, device=device).expand(*batch_shape, 1, 4, 4)
     if poses is None:
-        poses = forward_kinematics(mdh, torch.zeros((*batch_shape,dof, 1), device=device))
+        if joints is None:
+            joints = torch.zeros((*batch_shape, dof, 1), device=device)
+        poses = forward_kinematics(mdh, joints)
     poses = torch.cat([identity, poses], dim=-3)
 
     # Starting point of the first capsule is the pose from base
-    s_d = poses[..., :-1,:3, 3]
+    s_d = poses[..., :-1, :3, 3]
     # End point of the second capsule is the pose after
-    e_a = poses[..., 1:,:3, 3]
+    e_a = poses[..., 1:, :3, 3]
     # The middle point is given by a d-long translation along the current z-axis
-    z_axis = poses[...,1:, :3, 2]
+    z_axis = poses[..., 1:, :3, 2]
     d = mdh[..., 2].unsqueeze(-1)
     e_d = s_a = s_d + d * z_axis
 
     # Assemble the chain (stack+flatten essentially zips such that s_a_1, s_d_1, s_a_2, s_d_2, ..)
     s_all = torch.stack([s_d, s_a], dim=-2).flatten(-3, -2)
     e_all = torch.stack([e_d, e_a], dim=-2).flatten(-3, -2)
-
     return s_all, e_all
 
 
@@ -266,17 +267,17 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
 
     # Ignore distances between capsules that are next to each other due to a=0 or d=0
     missing_capsule = (s_all == e_all).all(dim=-1).flatten(0, -2)
-    adjacent = missing_capsule[..., i_idx+1] & (j_idx - i_idx == 2)
-    adjacent |= missing_capsule[..., i_idx+1] & missing_capsule[..., i_idx+2] & (j_idx - i_idx == 3)
-    #exclude missing capsules altogether?
+    adjacent = missing_capsule[..., i_idx + 1] & (j_idx - i_idx == 2)
+    adjacent |= missing_capsule[..., i_idx + 1] & missing_capsule[..., i_idx + 2] & (j_idx - i_idx == 3)
+    # exclude missing capsules altogether?
 
     # Collision if any signed distance < 0 in that configuration
-    collision_flags = ((distances <0) & (~adjacent)).any(dim=-1)
+    collision_flags = ((distances < 0) & (~adjacent)).any(dim=-1)
 
     return collision_flags.reshape(batch_shape)
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
                        poses: Float[Tensor, "batch 4 4"]) -> tuple[
     Float[Tensor, "batch dofp1 1"],
@@ -302,7 +303,7 @@ def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
     return joints, manipulability
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> tuple[
     Float[Tensor, "batch dofp1 1"],
     Float[Tensor, "batch"]
@@ -364,7 +365,7 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
     return full_joints, full_manipulability
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def numerical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> tuple[
     Float[Tensor, "batch dofp1 1"],
     Float[Tensor, "batch"]
