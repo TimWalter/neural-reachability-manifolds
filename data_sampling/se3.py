@@ -39,12 +39,31 @@ N_CELLS = r3.N_CELLS * so3.N_CELLS
 
 
 #@jaxtyped(typechecker=beartype)
-def _split_index(index: Int[Tensor, "*batch"]) -> tuple[Int[Tensor, "*batch"], Int[Tensor, "*batch"]]:
+def split_index(index: Int[Tensor, "*batch"]) -> tuple[Int[Tensor, "*batch"], Int[Tensor, "*batch"]]:
+    """
+    Split SE(3) cell index into R3 and SO(3) indices.
+
+    Args:
+        index: SE(3) cell index.
+
+    Returns:
+        R3 and SO(3) index
+    """
     return index % r3.N_CELLS, index // r3.N_CELLS
 
 
 #@jaxtyped(typechecker=beartype)
-def _combine_index(r3_index: Int[Tensor, "*batch"], so3_index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch"]:
+def combine_index(r3_index: Int[Tensor, "*batch"], so3_index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch"]:
+    """
+    Combine R3 and SO(3) index into SE(3) cell index.
+
+    Args:
+        r3_index: R3 index.
+        so3_index: SO(3) index.
+
+    Returns:
+        SE(3) cell index.
+    """
     return r3_index + so3_index * r3.N_CELLS
 
 
@@ -58,7 +77,7 @@ def index(pose: Float[Tensor, "*batch 4 4"]) -> Int[Tensor, "*batch"]:
     Returns:
         Cell index.
     """
-    return _combine_index(r3.index(pose[:, :3, 3]), so3.index(pose[:, :3, :3]))
+    return combine_index(r3.index(pose[:, :3, 3]), so3.index(pose[:, :3, :3]))
 
 
 #@jaxtyped(typechecker=beartype)
@@ -72,7 +91,7 @@ def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
     Returns:
         Cell pose.
     """
-    r3_index, so3_index = _split_index(index)
+    r3_index, so3_index = split_index(index)
     se3 = torch.eye(4).repeat(*index.shape, 1, 1)
     se3[..., :3, 3] = r3.cell(r3_index)
     se3[..., :3, :3] = so3.cell(so3_index)
@@ -90,7 +109,7 @@ def cell_vec(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 9"]:
     Returns:
         Cell pose vectorized.
     """
-    r3_index, so3_index = _split_index(index)
+    r3_index, so3_index = split_index(index)
     return torch.cat([r3.cell(r3_index), rotation_matrix_to_continuous(so3.cell(so3_index))], dim=-1)
 
 
@@ -108,13 +127,13 @@ def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 12"]:
     Notes:
         For boundary cells, we return the index of the cell itself for the out-of-bounds neighbours.
     """
-    r3_index, so3_index = _split_index(index)
+    r3_index, so3_index = split_index(index)
 
-    nn_r3, nn_so3 = _split_index(index.unsqueeze(-1).repeat(*([1] * index.ndim), 12))
+    nn_r3, nn_so3 = split_index(index.unsqueeze(-1).repeat(*([1] * index.ndim), 12))
     nn_r3[..., :6] = r3.nn(r3_index)
     nn_so3[..., 6:] = so3.nn(so3_index)
 
-    nn = _combine_index(nn_r3, nn_so3)
+    nn = combine_index(nn_r3, nn_so3)
     return nn
 
 
