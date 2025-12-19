@@ -20,10 +20,9 @@ class BallBaseline(Model):
         super().__init__()
         self.centre = nn.Parameter(torch.tensor([0.0, 0.0, 0.0]))
         self.radius = nn.Parameter(torch.tensor(0.75))
-        self.temperature = nn.Parameter(torch.tensor(1.0))
 
     def forward(self, pose: Float[Tensor, "batch 9"], _: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch 1"]:
         distance = torch.norm(pose[:, :3] - self.centre, dim=1, keepdim=True)
-        logits = (self.radius - distance) * torch.exp(self.temperature)
+        logits = self.radius - distance
 
         return logits
