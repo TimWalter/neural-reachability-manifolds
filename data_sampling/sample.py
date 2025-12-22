@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from data_sampling.sample_morph import sample_morph
 from data_sampling.representations import homogeneous_to_vector
-from data_sampling.estimate_workspace import estimate_workspace, estimate_workspace_analytically
+from data_sampling.sample_capability_map import sample_capability_map_analytically, sample_capability_map
 
 CHUNK_SIZE = 100_000 # ~100MB
 SHARD_SIZE = CHUNK_SIZE * 100 # ~10GB
@@ -61,17 +61,14 @@ for dof in range(6, 7):
 
     for morph in tqdm(morphs, desc=f"Generating {dof} DOF robots"):
         if args.set == "train":
-            cell_indices, labels = estimate_workspace(morph)
+            cell_indices, labels = sample_capability_map(morph, args.num_samples)
 
-            r_subset = torch.randperm(labels.shape[0]//2)[:args.num_samples//2]
-            u_subset = r_subset + labels.shape[0]//2
-
-            poses = torch.cat([cell_indices[r_subset], cell_indices[u_subset]], dim=0).unsqueeze(1)
-            labels = torch.cat([labels[r_subset], labels[u_subset]], dim=0).long().unsqueeze(1)
+            poses = cell_indices.unsqueeze(1)
+            labels = labels.long().unsqueeze(1)
         else:
-            poses, labels = estimate_workspace_analytically(morph, args.num_samples)
+            poses, labels = sample_capability_map_analytically(morph, args.num_samples)
             poses = homogeneous_to_vector(poses)
-            labels = labels.unsqueeze(1).float()
+            labels = labels.float().unsqueeze(1)
 
         morph = torch.nn.functional.pad(morph, (0, 0, 0, 8 - morph.shape[0]))
         with lock:
