@@ -152,3 +152,23 @@ def random(num_samples: int) -> Float[Tensor, "num_samples 4 4"]:
     pose[:, :3, :3] = so3.random(num_samples)
     pose[:, :3, 3] = r3.random(num_samples)
     return pose
+
+#@jaxtyped(typechecker=beartype)
+def random_ball(num_samples: int,
+                centre: Float[Tensor, "3"],
+                radius: float) -> Float[Tensor, "num_samples 4 4"]:
+    """
+    Sample random poses uniformly from a bounding ball.
+
+    Args:
+        num_samples: Number of samples to generate.
+        centre: Ball centre.
+        radius: Ball radius.
+
+    Returns:
+        Random poses.
+    """
+    pose = torch.eye(4).repeat(num_samples, 1, 1)
+    pose[:, :3, :3] = so3.random(num_samples)
+    pose[:, :3, 3] = r3.random_ball(num_samples, centre, radius)
+    return pose
