@@ -103,6 +103,15 @@ def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"], soft: bool
     return manipulability
 
 
+def unique_with_index(x, dim=0):
+    unique, inverse, counts = torch.unique(x, dim=dim,
+                                           sorted=True, return_inverse=True, return_counts=True)
+    inv_sorted = inverse.argsort(stable=True)
+    tot_counts = torch.cat((counts.new_zeros(1), counts.cumsum(dim=0)))[:-1]
+    index = inv_sorted[tot_counts]
+    return unique, index
+
+
 # @jaxtyped(typechecker=beartype)
 def unique_indices(indices: Int[Tensor, "batch"],
                    manipulability: Float[Tensor, "batch"],
@@ -127,10 +136,7 @@ def unique_indices(indices: Int[Tensor, "batch"],
     indices = indices[sort_indices]
     other = [tensor[sort_indices] for tensor in other]
 
-    indices, inverse, counts = torch.unique(indices, sorted=True, return_inverse=True, return_counts=True)
-    inv_sorted = inverse.argsort(stable=True)
-    tot_counts = torch.cat((counts.new_zeros(1), counts.cumsum(dim=0)))[:-1]
-    unique_indices = inv_sorted[tot_counts]
+    indices, unique_indices = unique_with_index(indices)
 
     manipulability = manipulability[unique_indices]
     other = [tensor[unique_indices] for tensor in other]
@@ -328,7 +334,7 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
     eaik_bot = HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
     if not eaik_bot.hasKnownDecomposition():
         raise RuntimeError("Robot is not analytically solvable.")
-    solutions = eaik_bot.IK_batched(poses.numpy())
+    solutions = eaik_bot.IK_batched(poses.cpu().numpy())
     joints = [sol.Q for sol in solutions if sol.num_solutions() != 0]
     if not joints:
         full_joints = torch.zeros((*poses.shape[:-2], mdh.shape[0], 1), device=mdh.device)
