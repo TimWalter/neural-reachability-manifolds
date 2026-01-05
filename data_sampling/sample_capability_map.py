@@ -1,3 +1,18 @@
+import os
+def _check_scipy_array_api():
+    """assert SCIPY_ARRAY_API as true"""
+    enabled = os.environ.get("SCIPY_ARRAY_API", "").lower() in ("1", "true", "yes")
+    if not enabled:
+        raise RuntimeError(
+            "SCIPY_ARRAY_API must be enabled! "
+            "Please run: export SCIPY_ARRAY_API=\"true\" before importing this module"
+        )
+    else:
+        print("[INFO] SCIPY_ARRAY_API = true, multiple backend enabled")
+
+_check_scipy_array_api()
+
+
 import torch
 from torch import Tensor
 from beartype import beartype
