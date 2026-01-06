@@ -2,6 +2,7 @@ import torch
 from beartype import beartype
 from jaxtyping import Float, jaxtyped
 from torch import Tensor
+import jax
 
 from scipy.spatial.transform import Rotation
 
@@ -50,7 +51,6 @@ def rotation_matrix_to_continuous(rotation_matrix: Float[Tensor, "*batch 3 3"]) 
         6D rotation representation
     """
     return rotation_matrix[..., :3, :2].transpose(-1, -2).reshape(*rotation_matrix.shape[:-2], 6)
-
 
 # @jaxtyped(typechecker=beartype)
 def continuous_to_rotation_matrix(ml: Float[Tensor, "*batch 6"]) -> Float[Tensor, "*batch 3 3"]:

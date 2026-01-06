@@ -1,5 +1,6 @@
 uv.lock
 .env
+/.vscode
 
 /data
 /trained_models
