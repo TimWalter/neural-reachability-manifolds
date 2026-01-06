@@ -25,19 +25,12 @@ def test_distance():
     assert torch.allclose(d, torch.tensor([torch.pi]))
 
 def test_max_distance_between_cells():
-    cells = so3.cell(torch.arange(so3.N_CELLS))
-    # Have to do batches to avoid OOM
-    distances = []
-    for i in range(0, so3.N_CELLS, 1000):
-        distances += [
-            so3.distance(
-                cells[i:i + 1000].unsqueeze(1).expand(min(1000, so3.N_CELLS - i), so3.N_CELLS, 3, 3),
-                cells.unsqueeze(0).expand(min(1000, so3.N_CELLS - i), so3.N_CELLS, 3, 3)
-            )
-        ]
-    distances = torch.cat(distances, dim=0).squeeze(-1)
-    distances = distances.sort(dim=1).values  # the smallest distance is with themselves
-    assert torch.allclose(distances[:, 1:7].max(), torch.tensor([so3.MAX_DISTANCE_BETWEEN_CELLS]))
+    cell_indices = torch.arange(so3.N_CELLS)
+    cells = so3.cell(cell_indices)
+    nn = so3.cell(so3.nn(cell_indices))
+    distances = so3.distance(cells.unsqueeze(1).expand(cells.shape[0], nn.shape[1], 3, 3), nn)
+    max_distance = distances.max()
+    assert torch.allclose(max_distance, torch.tensor([so3.MAX_DISTANCE_BETWEEN_CELLS]))
 
 def test_index_cell_consistency():
     test_indices = torch.tensor([0, 1, 2, 3, 4])

@@ -9,8 +9,7 @@ from scipy.spatial.transform import Rotation
 from data_sampling.representations import rotation_matrix_to_rotation_vector
 
 
-
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def distance(x1: Float[Tensor, "*batch 3 3"],
              x2: Float[Tensor, "*batch 3 3"]) -> Float[Tensor, "*batch 1"]:
     """
@@ -31,7 +30,7 @@ def distance(x1: Float[Tensor, "*batch 3 3"],
     return rot_err.unsqueeze(-1)
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def index(orientation: Float[Tensor, "batch 3 3"]) -> Int[Tensor, "batch"]:
     """
     Get cell index for the given orientation.
@@ -55,7 +54,7 @@ def index(orientation: Float[Tensor, "batch 3 3"]) -> Int[Tensor, "batch"]:
     return index
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
     """
     Get cell orientation for the given index.
@@ -69,7 +68,7 @@ def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
     return _CELLS[index]
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
     """
     Get nearest neighbour cell indices for the given index.
@@ -86,7 +85,8 @@ def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
 
     return _NN[index]
 
-#@jaxtyped(typechecker=beartype)
+
+# @jaxtyped(typechecker=beartype)
 def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int[Tensor, "n_div n_div n_div"]:
     """
     Generate lookup table.
@@ -122,7 +122,7 @@ def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int[Ten
     return lookup
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 6"]:
     """
     Generate indices for nearest neighbours.
@@ -133,14 +133,22 @@ def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 
     Returns:
         Nearest neighbour indices.
     """
-    distances = distance(cells.unsqueeze(0).expand(cells.shape[0], cells.shape[0], 3, 3),
-                         cells.unsqueeze(1).expand(cells.shape[0], cells.shape[0], 3, 3)).squeeze(-1)
-    nn = distances.argsort(dim=-1)[:, 1:7]  # Exclude self (first column)
-    return nn
+    # Have to do batches to avoid OOM
+    nn = []
+    for i in range(0, cells.shape[0], 1000):
+        batch = cells[i: i + 1000]
+        current_batch_size = batch.shape[0]
+        x1 = batch.unsqueeze(1).expand(current_batch_size, cells.shape[0], 3, 3)
+        x2 = cells.unsqueeze(0).expand(current_batch_size, cells.shape[0], 3, 3)
+        distances = distance(x1, x2).squeeze(-1)
+        nn += [distances.argsort(dim=-1)[:, 1:7].cpu()]  # Exclude self (first column)
+    nn = torch.cat(nn, dim=0)
+    return nn.clone().to(torch.int64)
 
-LEVEL = 3
 
-MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792 ,3: 0.1654}[LEVEL]
+LEVEL = 4
+
+MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792, 3: 0.1654, 4: 0.1390690207}[LEVEL]
 _CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
 N_CELLS = _CELLS.shape[0]
 
@@ -155,10 +163,11 @@ nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"
 if nn_path.exists():
     _NN = torch.load(nn_path, map_location="cpu")
 else:
-    _NN = _generate_nn(_CELLS)
+    _NN = _generate_nn(_CELLS.to("cuda"))
     torch.save(_NN, nn_path)
 
-#@jaxtyped(typechecker=beartype)
+
+# @jaxtyped(typechecker=beartype)
 def random(num_samples: int) -> Float[Tensor, "num_samples 3 3"]:
     """
     Sample random orientations uniformly from SO(3).
