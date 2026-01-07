@@ -3,16 +3,17 @@ from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, Int, Bool, jaxtyped
 
-from data_sampling.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check
+from data_sampling.robotics import forward_kinematics, geometric_jacobian, yoshikawa_manipulability, collision_check, LINK_RADIUS
 
 
 #@jaxtyped(typechecker=beartype)
 def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof+1}"]:
     """
-    Sample link types
-        0 <=> a≠0, d≠0
-        1 <=> a=0, d≠0
-        2 <=> a≠0, d=0
+    Sample link types:
+        0 <=> a≠0, d≠0 (General)
+        1 <=> a=0, d≠0 (Only link length)
+        2 <=> a≠0, d=0 (Only link offset)
+        3 <=> a=0, d=0 (Point intersection / Spherical Wrist component)
     Args:
         batch_size: number of robots to sample
         dof: degrees of freedom of the robots
@@ -20,7 +21,7 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
     Returns:
         Link type sampled uniformly
     """
-    link_type = torch.randint(0, 3, size=(batch_size, dof + 1))
+    link_type = torch.randint(0, 4, size=(batch_size, dof + 1))
     return link_type
 
 
@@ -40,7 +41,8 @@ def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tens
     link_twist_choice = torch.rand(*link_type.shape)
     link_twist = link_twist_options[(link_twist_choice > 1 / 3).to(torch.int64) + (link_twist_choice > 2 / 3).to(torch.int64)]
 
-    link_twist[link_type == 1] = link_twist_options[1 + (link_twist_choice[link_type == 1] > 1 / 2).to(torch.int64)]
+    mask = (link_type == 1) | (link_type == 3)
+    link_twist[mask] = link_twist_options[1 + (link_twist_choice[mask] > 1 / 2).to(torch.int64)]
 
     return link_twist
 
@@ -80,8 +82,8 @@ def _sample_link_length(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Ten
     gamma = torch.rand((link_type == 0).sum()) * 2 * torch.pi
     link_lengths[..., 0][link_type == 0] *= torch.sin(gamma)
     link_lengths[..., 1][link_type == 0] *= torch.cos(gamma)
-    link_lengths[..., 0][link_type == 1] = 0
-    link_lengths[..., 1][link_type == 2] = 0
+    link_lengths[..., 0][(link_type == 1) | (link_type == 3)] = 0
+    link_lengths[..., 1][(link_type == 2) | (link_type == 3)] = 0
     return link_lengths
 
 
@@ -96,7 +98,7 @@ def _reject_link_length(link_length: Float[Tensor, "batch_size dofp1 2"]) -> Boo
     Returns:
         Mask of rejected link lengths
     """
-    rejected = ((link_length.abs() < 0.05) & (link_length != 0)).any(dim=(1, 2))
+    rejected = ((link_length.abs() < 2*LINK_RADIUS) & (link_length != 0)).any(dim=(1, 2))
     return rejected
 
 
