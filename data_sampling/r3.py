@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from jaxtyping import Float, Int, jaxtyped
+from jaxtyping import Float, Int64, jaxtyped
 from beartype import beartype
 
 
@@ -19,14 +19,14 @@ def distance(x1: Float[Tensor, "*batch 3"], x2: Float[Tensor, "*batch 3"]) -> Fl
     return torch.norm(x1 - x2, dim=-1, keepdim=True)
 
 
-N_DIV = 36
+N_DIV = 55
 MAX_DISTANCE_BETWEEN_CELLS = 2 / N_DIV
 N_CELLS = N_DIV ** 3
 
 
 # @jaxtyped(typechecker=beartype)
-def _split_index(index: Int[Tensor, "*batch"]) -> tuple[
-    Int[Tensor, "*batch"], Int[Tensor, "*batch"], Int[Tensor, "*batch"]]:
+def _split_index(index: Int64[Tensor, "*batch"]) -> tuple[
+    Int64[Tensor, "*batch"], Int64[Tensor, "*batch"], Int64[Tensor, "*batch"]]:
     x = index % N_DIV
     y = (index // N_DIV) % N_DIV
     z = index // (N_DIV * N_DIV)
@@ -34,13 +34,13 @@ def _split_index(index: Int[Tensor, "*batch"]) -> tuple[
 
 
 # @jaxtyped(typechecker=beartype)
-def _combine_index(x: Int[Tensor, "*batch"], y: Int[Tensor, "*batch"], z: Int[Tensor, "*batch"]) -> Int[
-    Tensor, "*batch"]:
+def _combine_index(x: Int64[Tensor, "*batch"], y: Int64[Tensor, "*batch"], z: Int64[Tensor, "*batch"]) \
+        -> Int64[Tensor, "*batch"]:
     return x + y * N_DIV + z * N_DIV * N_DIV
 
 
 # @jaxtyped(typechecker=beartype)
-def index(position: Float[Tensor, "*batch 3"]) -> Int[Tensor, "*batch"]:
+def index(position: Float[Tensor, "*batch 3"]) -> Int64[Tensor, "*batch"]:
     """
     Get cell index for the given position.
 
@@ -56,7 +56,7 @@ def index(position: Float[Tensor, "*batch 3"]) -> Int[Tensor, "*batch"]:
 
 
 # @jaxtyped(typechecker=beartype)
-def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3"]:
+def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3"]:
     """
     Get cell position for the given index.
 
@@ -73,7 +73,7 @@ def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3"]:
 
 
 # @jaxtyped(typechecker=beartype)
-def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
+def nn(index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch 6"]:
     """
     Get nearest neighbour cell indices for the given index.
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import Float, Int, jaxtyped
+from jaxtyping import Float, Int64, jaxtyped
 
 from scipy.spatial.transform import Rotation
 from data_sampling.representations import rotation_matrix_to_rotation_vector
@@ -31,7 +31,7 @@ def distance(x1: Float[Tensor, "*batch 3 3"],
 
 
 # @jaxtyped(typechecker=beartype)
-def index(orientation: Float[Tensor, "batch 3 3"]) -> Int[Tensor, "batch"]:
+def index(orientation: Float[Tensor, "batch 3 3"]) -> Int64[Tensor, "batch"]:
     """
     Get cell index for the given orientation.
 
@@ -55,7 +55,7 @@ def index(orientation: Float[Tensor, "batch 3 3"]) -> Int[Tensor, "batch"]:
 
 
 # @jaxtyped(typechecker=beartype)
-def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
+def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
     """
     Get cell orientation for the given index.
 
@@ -69,7 +69,7 @@ def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
 
 
 # @jaxtyped(typechecker=beartype)
-def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
+def nn(index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch 6"]:
     """
     Get nearest neighbour cell indices for the given index.
 
@@ -87,7 +87,7 @@ def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 6"]:
 
 
 # @jaxtyped(typechecker=beartype)
-def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int[Tensor, "n_div n_div n_div"]:
+def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int64[Tensor, "n_div n_div n_div"]:
     """
     Generate lookup table.
 
@@ -105,8 +105,8 @@ def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int[Ten
     n_cells = cells.shape[0]
     num_points = lookup_centre.shape[0]
     # Have to do batches to avoid OOM
-    for i in range(0, num_points, 10000):
-        batch_centers = lookup_centre[i: i + 10000]
+    for i in range(0, num_points, 1000):
+        batch_centers = lookup_centre[i: i + 1000]
         current_batch_size = batch_centers.shape[0]
 
         x1 = cells.unsqueeze(0).expand(current_batch_size, n_cells, 3, 3).reshape(-1, 3, 3)
@@ -116,9 +116,9 @@ def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int[Ten
         distances = distances.view(current_batch_size, n_cells)
 
         nearest_idx = torch.argmin(distances, dim=1)
-        nearest_indices_list.append(nearest_idx)
+        nearest_indices_list.append(nearest_idx.cpu())
 
-    lookup = torch.cat(nearest_indices_list).view(n_div, n_div, n_div).to(torch.int32)
+    lookup = torch.cat(nearest_indices_list).view(n_div, n_div, n_div).to(torch.int64)
     return lookup
 
 
@@ -156,7 +156,7 @@ lookup_path = Path(__file__).parent / f"lookup_{LEVEL}.pt"
 if lookup_path.exists():
     _LOOKUP = torch.load(lookup_path, map_location="cpu")
 else:
-    _LOOKUP = _generate_lookup(128, _CELLS)
+    _LOOKUP = _generate_lookup(128, _CELLS.to("cuda"))
     torch.save(_LOOKUP, lookup_path)
 
 nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"

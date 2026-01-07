@@ -2,7 +2,7 @@ import math
 import torch
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import Float, jaxtyped, Int
+from jaxtyping import Float, jaxtyped, Int64
 
 import data_sampling.r3 as r3
 import data_sampling.so3 as so3
@@ -39,7 +39,7 @@ N_CELLS = r3.N_CELLS * so3.N_CELLS
 
 
 #@jaxtyped(typechecker=beartype)
-def split_index(index: Int[Tensor, "*batch"]) -> tuple[Int[Tensor, "*batch"], Int[Tensor, "*batch"]]:
+def split_index(index: Int64[Tensor, "*batch"]) -> tuple[Int64[Tensor, "*batch"], Int64[Tensor, "*batch"]]:
     """
     Split SE(3) cell index into R3 and SO(3) indices.
 
@@ -53,7 +53,7 @@ def split_index(index: Int[Tensor, "*batch"]) -> tuple[Int[Tensor, "*batch"], In
 
 
 #@jaxtyped(typechecker=beartype)
-def combine_index(r3_index: Int[Tensor, "*batch"], so3_index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch"]:
+def combine_index(r3_index: Int64[Tensor, "*batch"], so3_index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch"]:
     """
     Combine R3 and SO(3) index into SE(3) cell index.
 
@@ -68,7 +68,7 @@ def combine_index(r3_index: Int[Tensor, "*batch"], so3_index: Int[Tensor, "*batc
 
 
 #@jaxtyped(typechecker=beartype)
-def index(pose: Float[Tensor, "*batch 4 4"]) -> Int[Tensor, "*batch"]:
+def index(pose: Float[Tensor, "*batch 4 4"]) -> Int64[Tensor, "*batch"]:
     """
     Get cell index for the given poses.
 
@@ -81,7 +81,7 @@ def index(pose: Float[Tensor, "*batch 4 4"]) -> Int[Tensor, "*batch"]:
 
 
 #@jaxtyped(typechecker=beartype)
-def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
+def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
     """
     Get cell pose for the given index.
 
@@ -99,7 +99,7 @@ def cell(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
 
 
 #@jaxtyped(typechecker=beartype)
-def cell_vec(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 9"]:
+def cell_vec(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 9"]:
     """
     Get cell pose for the given index.
 
@@ -114,7 +114,7 @@ def cell_vec(index: Int[Tensor, "*batch"]) -> Float[Tensor, "*batch 9"]:
 
 
 #@jaxtyped(typechecker=beartype)
-def nn(index: Int[Tensor, "*batch"]) -> Int[Tensor, "*batch 12"]:
+def nn(index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch 12"]:
     """
     Get nearest neighbour cell indices for the given index.
 
