@@ -22,8 +22,8 @@ def estimate_bytes(device: torch.device, workload: Callable, args: list) -> int:
     torch.cuda.reset_peak_memory_stats(device)
     base = torch.cuda.memory_allocated(device)
 
-    with torch.no_grad():
-        workload(*args)
+    workload(*args)
+
     torch.cuda.synchronize(device)
     peak = torch.cuda.max_memory_allocated(device)
     delta = max(peak - base, 1)
