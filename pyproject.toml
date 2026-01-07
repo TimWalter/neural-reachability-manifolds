@@ -14,7 +14,12 @@ dependencies = [
     "scipy>=1.17.0rc1",
     "eaik>=1.2.1",
     "tabulate>=0.9.0",
-    "fasteners>=0.20"
+    "fasteners>=0.20",
+    "matplotlib>=3.10.8",
+    "jupyter>=1.1.1",
+    "plotly>=6.5.0",
+    "seaborn>=0.13.2",
+    "scipy-stubs~=1.17.0rc2",
 ]
 
 [tool.ruff]
