@@ -204,8 +204,8 @@ v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, N
 def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
                  poses: Optional[Float[torch.Tensor, "*batch dofp1 4 4"]] = None,
                  joints: Optional[Float[torch.Tensor, "*batch dofp1 1"]] = None) -> tuple[
-    Float[torch.Tensor, "*batch dofp1 3"],
-    Float[torch.Tensor, "*batch dofp1 3"],
+    Float[torch.Tensor, "*batch 2*dofp1 3"],
+    Float[torch.Tensor, "*batch 2*dofp1 3"],
 ]:
     *batch_shape, dof, _ = mdh.shape
     device = mdh.device
@@ -218,18 +218,18 @@ def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
         poses = forward_kinematics(mdh, joints)
     poses = torch.cat([identity, poses], dim=-3)
 
-    # Starting point of the first capsule is the pose from base
-    s_d = poses[..., :-1, :3, 3]
-    # End point of the second capsule is the pose after
-    e_a = poses[..., 1:, :3, 3]
-    # The middle point is given by a d-long translation along the current z-axis
+    # Starting point of the first capsule (a) is the pose from base
+    s_a = poses[..., :-1, :3, 3]
+    # End point of the second capsule (d) is the pose after
+    e_d = poses[..., 1:, :3, 3]
+    # The middle point is deducted by reversing the translation d along the z-axis
     z_axis = poses[..., 1:, :3, 2]
     d = mdh[..., 2].unsqueeze(-1)
-    e_d = s_a = s_d + d * z_axis
+    e_a = s_d = e_d - d * z_axis
 
     # Assemble the chain (stack+flatten essentially zips such that s_a_1, s_d_1, s_a_2, s_d_2, ..)
-    s_all = torch.stack([s_d, s_a], dim=-2).flatten(-3, -2)
-    e_all = torch.stack([e_d, e_a], dim=-2).flatten(-3, -2)
+    s_all = torch.stack([s_a, s_d], dim=-2).flatten(-3, -2)
+    e_all = torch.stack([e_a, e_d], dim=-2).flatten(-3, -2)
     return s_all, e_all
 
 
@@ -256,30 +256,21 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     # Capsule pair combinations
     i_idx, j_idx = torch.triu_indices(2 * dof, 2 * dof, offset=1, device=device)
 
-    # Skip capsule pairs if they are next to each other in the kinematic chain
-    adjacent = j_idx - i_idx == 1
-    i_idx = i_idx[~adjacent]
-    j_idx = j_idx[~adjacent]
-    num_pairs = len(i_idx)
-
     # Gather capsule endpoints
-    s1 = s_all[..., i_idx, :].reshape(-1, num_pairs, 3)
-    e1 = e_all[..., i_idx, :].reshape(-1, num_pairs, 3)
-    s2 = s_all[..., j_idx, :].reshape(-1, num_pairs, 3)
-    e2 = e_all[..., j_idx, :].reshape(-1, num_pairs, 3)
+    s1 = s_all[..., i_idx, :].reshape(-1, i_idx.shape[0], 3)
+    e1 = e_all[..., i_idx, :].reshape(-1, i_idx.shape[0], 3)
+    s2 = s_all[..., j_idx, :].reshape(-1, i_idx.shape[0], 3)
+    e2 = e_all[..., j_idx, :].reshape(-1, i_idx.shape[0], 3)
 
     # Compute signed distances
-    distances = v_signed_distance(s1, e1, radius, s2, e2, radius)  # (batch_flat, num_pairs)
+    distances = v_signed_distance(s1, e1, radius, s2, e2, radius)
 
-    # Ignore distances between capsules that are next to each other due to a=0 or d=0
-    missing_capsule = (s_all == e_all).all(dim=-1).flatten(0, -2)
-    adjacent = missing_capsule[..., i_idx + 1] & (j_idx - i_idx == 2)
-    adjacent |= missing_capsule[..., i_idx + 1] & missing_capsule[..., i_idx + 2] & (j_idx - i_idx == 3)
-    # exclude missing capsules altogether?
+    # Ignore distances with missing capsules
+    missing_capsules = (torch.norm(s1 - e1, dim=-1) < EPS) | (torch.norm(s2 - e2, dim=-1) < EPS)
+    # Ignore adjacent capsules
+    adjacent = (torch.norm(e1 - s2, dim=-1) < EPS)
 
-    # Collision if any signed distance < 0 in that configuration
-    collision_flags = ((distances < 0) & (~adjacent)).any(dim=-1)
-
+    collision_flags = ((distances < 0) & ~adjacent & ~missing_capsules).any(dim=-1)
     return collision_flags.reshape(batch_shape)
 
 
