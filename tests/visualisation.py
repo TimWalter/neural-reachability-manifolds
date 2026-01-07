@@ -40,12 +40,12 @@ def get_sphere_mesh(center: Float[Tensor, "3"], radius: float, resolution: int =
     return x, y, z
 
 @jaxtyped(typechecker=beartype)
-def get_robot_traces(mdh, color, show_legend: bool = False):
+def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
     """
     Generates robot meshes.
     show_legend: If True, adds one entry to the legend. If False, hides all from legend.
     """
-    s_all, e_all = get_capsules(mdh, None)
+    s_all, e_all = get_capsules(mdh, poses)
     traces = []
 
     # We only want one single legend entry for the whole robot to avoid clutter
@@ -65,6 +65,7 @@ def get_robot_traces(mdh, color, show_legend: bool = False):
         traces.append(go.Surface(
             x=cx, y=cy, z=cz,
             showscale=False,
+            opacity=0.5,
             surfacecolor=torch.zeros_like(cx),
             colorscale=[[0, color], [1, color]],
             lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
@@ -75,18 +76,24 @@ def get_robot_traces(mdh, color, show_legend: bool = False):
         ))
 
     joints = torch.cat([s_all, e_all[-1:]]).cpu()
-    for j_pos in joints:
-        sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS * 1.1, resolution=15)
-        traces.append(go.Surface(
-            x=sx, y=sy, z=sz,
-            showscale=False,
-            surfacecolor=torch.zeros_like(sx),
-            colorscale=[[0, color], [1, color]],
-            lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
-            legendgroup="Robot_Group", # Link to same group
-            showlegend=False,          # Spheres never need their own legend
-            hoverinfo='skip'
-        ))
+    latest_pos = None
+    for i, j_pos in enumerate(joints):
+        sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS, resolution=15)
+        joint_color = "red" # the ones we move by theta
+        moving = i % 2 == 0 and i != 0 and i != len(joints) - 1
+        if latest_pos is None or moving or (latest_pos != j_pos).any():
+            traces.append(go.Surface(
+                x=sx, y=sy, z=sz,
+                showscale=False,
+                surfacecolor=torch.zeros_like(sx),
+                colorscale=[[0, color if not moving else joint_color],
+                            [1, color if not moving else joint_color]],
+                lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
+                legendgroup="Robot_Group", # Link to same group
+                showlegend=False,          # Spheres never need their own legend
+                hoverinfo='skip'
+            ))
+            latest_pos = j_pos
     return traces
 
 
@@ -97,24 +104,20 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     show_legend: Only True for the first subplot to prevent duplicate legend entries.
     """
     traces = []
-    # 1. Extract Geometry
-    inv_mat = torch.inverse(
-        transformation_matrix(mdh[-1, 0:1], mdh[-1, 1:2], mdh[-1, 2:3], torch.zeros(1)))
-    prev_poses = poses @ inv_mat
 
     origins = poses[:, :3, 3]
-    z_axes = prev_poses[:, :3, 2]
-    x_axes = prev_poses[:, :3, 0]
+    z_axes = poses[:, :3, 2]
+    x_axes = poses[:, :3, 0]
 
     a = mdh[-1, 1]
     d = mdh[-1, 2]
 
     # Calculate start points
-    x_ends = origins + (x_axes * 0.025 * (a / (a + d)))
-    z_ends = x_ends + (z_axes * 0.025 * (d / (a + d)))
+    z_ends = origins - (z_axes * 0.025 * (d / (a + d)))
+    x_ends = z_ends - (x_axes * 0.025 * (a / (a + d)))
 
     # Build line segments: [start, origin, NaN]
-    l_shapes = torch.stack([x_ends, origins, x_ends, z_ends], dim=1)
+    l_shapes = torch.stack([z_ends, origins, z_ends, x_ends], dim=1)
     nans = torch.full((l_shapes.shape[0], 1, 3), float('nan'))
     with_nans = torch.cat([l_shapes, nans], dim=1)
 
@@ -247,7 +250,7 @@ def visualise(
             bgcolor='rgba(255,255,255,0.8)'
         ),
         paper_bgcolor='white',
-        height=500 * rows, # Dynamic height
+        height=500 * rows if cols == 3 else 1000, # Dynamic height
         width=1500,        # Fixed comfortable width
     )
     axis_style = dict(
