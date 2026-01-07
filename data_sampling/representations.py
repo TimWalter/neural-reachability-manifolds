@@ -1,9 +1,18 @@
+import os
 import torch
 from beartype import beartype
 from jaxtyping import Float, jaxtyped
 from torch import Tensor
 
 from scipy.spatial.transform import Rotation
+enabled = os.environ.get("SCIPY_ARRAY_API", "").lower() in ("1", "true", "yes")
+if not enabled:
+    raise RuntimeError(
+        "SCIPY_ARRAY_API must be enabled! "
+        "Please run: export SCIPY_ARRAY_API=\"true\" before importing this module"
+    )
+
+
 
 
 def homogeneous_to_vector(homogeneous: Float[Tensor, "*batch 4 4"]) -> Float[Tensor, "*batch 9"]:
