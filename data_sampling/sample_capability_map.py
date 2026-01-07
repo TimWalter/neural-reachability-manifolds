@@ -1,58 +1,82 @@
-import os
-def _check_scipy_array_api():
-    """assert SCIPY_ARRAY_API as true"""
-    enabled = os.environ.get("SCIPY_ARRAY_API", "").lower() in ("1", "true", "yes")
-    if not enabled:
-        raise RuntimeError(
-            "SCIPY_ARRAY_API must be enabled! "
-            "Please run: export SCIPY_ARRAY_API=\"true\" before importing this module"
-        )
-    else:
-        print("[INFO] SCIPY_ARRAY_API = true, multiple backend enabled")
-
-_check_scipy_array_api()
-
-
 import torch
 from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, jaxtyped, Int, Bool
+from tabulate import tabulate
 
 from data_sampling.autotune_batch_size import get_batch_size
-from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics, unique_with_index
+from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics, LINK_RADIUS
 
 import data_sampling.se3 as se3
+from datetime import datetime, timedelta  # TODO remove
 
 torch.set_float32_matmul_precision("high")
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_joints(batch_size: int, dof: int) -> Float[Tensor, "{batch_size} {dof+1}"]:
+def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
     """
-    sample random joint configurations for the robot.
+    Compute joint limits based on the morphology to avoid self-collisions.
+
+    Args:
+        morph: MDH parameters encoding the robot geometry.
+
+    Returns:
+        Joint limits
+    """
+    dof = morph.shape[0]
+    joint_limits = torch.zeros(dof,2, device="cuda")
+    for i in range(dof - 1):
+        alpha1, a1, d1 = morph[i]
+        alpha2, a2, d2 = morph[i + 1]
+
+        no_offset = d1 == 0
+        overlapping_offset = (a2.abs() - a1.abs() < 2 * LINK_RADIUS
+                              and (d1 - d2).abs() < 2 * LINK_RADIUS
+                              and alpha2 == 0)
+
+        if a1 != 0 and a2 != 0 and (no_offset or overlapping_offset):
+            # Avoid immediate self-collisions
+            arc = torch.arcsin(2 * LINK_RADIUS / a2.abs())
+            joint_limits[i,0] = 2 * torch.pi - 2 * arc
+            if torch.sign(a1) == torch.sign(a2):
+                joint_limits[i,1] = -torch.pi + arc
+            else:
+                joint_limits[i,1] = arc
+        else:
+            joint_limits[i,0] = 2 * torch.pi
+            joint_limits[i,1] = -torch.pi
+
+    return joint_limits
+
+# @jaxtyped(typechecker=beartype)
+def sample_joints(batch_size: int,
+                  morph: Float[Tensor, "dof 3"],
+                  joint_limits: Float[Tensor, "batch_size dof 2"]
+                  ) -> Float[Tensor, "{batch_size} {dof}"]:
+    """
+    Sample random joint configurations for the robot.
 
     Args:
         batch_size: Number of joint configurations to sample
-        dof: Degrees of freedom of the robot + 1
+        morph: MDH parameters encoding the robot geometry.
+        joint_limits: Joint limits to avoid self-collisions
 
     Returns:
         Newly sampled joint configurations
     """
-    joints = torch.cat(
-        [
-            2 * torch.pi * torch.rand(batch_size, dof - 1, device="cuda") - torch.pi,
-            torch.zeros(batch_size, 1, device="cuda"),
-        ],
-        dim=1,
-    )
+    dof = morph.shape[0]
+    joints = torch.rand(batch_size, dof, device="cuda") * joint_limits[..., 0] + joint_limits[..., 1]
 
     return joints
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_reachable_poses(batch_size: int, morph: Float[Tensor, "dof 3"]) -> tuple[
-    Float[Tensor, "n_valid 4 4"],
-    Int[Tensor, "n_valid"]
+def sample_reachable_poses(batch_size: int,
+                           morph: Float[Tensor, "batch_size dof 3"],
+                           joint_limits: Float[Tensor, "batch_size dof 2"]) -> tuple[
+    Float[Tensor, "batch_size 4 4"],
+    Int[Tensor, "batch_size"],
 ]:
     """
     Sample end effector poses for the robot and compute their discretised cell index.
@@ -60,20 +84,20 @@ def sample_reachable_poses(batch_size: int, morph: Float[Tensor, "dof 3"]) -> tu
     Args:
         batch_size: Number of end effector poses to sample.
         morph: MDH parameters encoding the robot geometry.
+        joint_limits: Joint limits to avoid self-collisions
 
     Returns:
         Reachable end effector poses and their respective cell indices.
     """
-    joints = sample_joints(batch_size, morph.shape[0])
-    poses = forward_kinematics(morph.unsqueeze(0).expand(batch_size, -1, -1), joints.unsqueeze(-1))
-    self_collision = collision_check(morph.unsqueeze(0).expand(poses.shape[0], -1, -1), poses)
+    joints = sample_joints(batch_size, morph[0], joint_limits)
+    poses = forward_kinematics(morph, joints.unsqueeze(-1))
+    self_collision = collision_check(morph, poses)
     poses = poses[:, -1, :, :][~self_collision]
     cell_indices = se3.index(poses)
-
     return poses, cell_indices
 
-
 compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
+
 
 # @jaxtyped(typechecker=beartype)
 def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor, "3"], float]:
@@ -86,13 +110,16 @@ def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor
     Returns:
         Center and radius of the reachable ball.
     """
-    args = (morph,)
-    batch_size = get_batch_size(morph.device, sample_reachable_poses, args, safety=0.5)
-    poses, _ = compiled_sample_reachable_poses(batch_size, *args)
+    joint_limits = get_joint_limits(morph)
+    probe_size = 2048
+    args = [probe_size, morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+    batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
+    poses, _ = compiled_sample_reachable_poses(batch_size, morph.unsqueeze(0).expand(batch_size, -1, -1), joint_limits.unsqueeze(0).expand(batch_size, -1, -1))
     centre = torch.mean(poses[:, :3, 3], dim=0)
     radius = torch.norm(poses[:, :3, 3] - centre, dim=1).max().item()
 
     return centre, radius
+
 
 @jaxtyped(typechecker=beartype)
 def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_samples: int) -> tuple[
@@ -119,34 +146,48 @@ def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_sample
     return poses.cpu(), labels
 
 
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"]) -> Int[Tensor, " num_samples"]:
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False) -> \
+        Int[Tensor, " num_samples"] | tuple[Int[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
     Fill up the discretised cells using FK until convergence. All unfilled cells are assumed to be unreachable.
 
     Args:
         morph: MDH parameters encoding the robot geometry.
+        debug: Whether to return benchmark parameters.
 
     Returns:
-        Cell indices of reachable cells.
+        Cell indices of reachable cells and optionally benchmark parameters.
     """
-    args = (morph,)
-    batch_size = get_batch_size(morph.device, sample_reachable_poses, args, safety=0.5)
+    joint_limits = get_joint_limits(morph)
+    probe_size = 2048
+    args = [probe_size, morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+    batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
+    morph = morph.unsqueeze(0).expand(batch_size, -1, -1)
+    joint_limits = joint_limits.unsqueeze(0).expand(batch_size, -1, -1)
+    if debug:  # Warm-Up for benchmarking
+        _ = compiled_sample_reachable_poses(batch_size, morph, joint_limits)
 
-    r_indices = torch.empty(0, dtype=torch.int64, device="cuda")
-    prev_shape = r_indices.shape[0]
-    while r_indices.shape[0] == 0 or (1 - prev_shape / r_indices.shape[0]) > 1e-5:
-        prev_shape = r_indices.shape[0]
+    indices = []
+    n_batches = 0
+    start = datetime.now()
+    while datetime.now() - start < timedelta(minutes=10):
+        _, new_indices = compiled_sample_reachable_poses(batch_size, morph, joint_limits)
+        indices += [new_indices.cpu()]
+        n_batches += 1
 
-        _, new_r_indices = compiled_sample_reachable_poses(batch_size, *args)
-        r_indices = torch.cat([r_indices, new_r_indices]).unique()
+    indices = torch.cat(indices)
+    collision_free_samples = indices.shape[0]
+    indices = indices.unique()
 
-    r_indices = r_indices.cpu()
-
-    # Dilate
-    #r_indices = torch.cat([r_indices, se3.nn(r_indices).flatten()], dim=0).unique()
-    print(r_indices.shape[0]//1e6)
-    return r_indices
+    if debug:
+        filled_cells = indices.shape[0]
+        total_samples = n_batches * batch_size
+        total_efficiency = filled_cells / total_samples
+        unique_efficiency = filled_cells / collision_free_samples
+        collision_efficiency = collision_free_samples / total_samples
+        return indices, (filled_cells, total_samples, total_efficiency, unique_efficiency, collision_efficiency)
+    return indices
 
 
 # @jaxtyped(typechecker=beartype)
@@ -177,10 +218,19 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> 
 
 if __name__ == "__main__":
     from data_sampling.sample_morph import sample_morph
-    from datetime import datetime
 
     torch.manual_seed(1)
-    morphs = [sample_morph(1, i, True)[0] for i in range(6, 7)]
-    start = datetime.now()
-    labels, cell_indices = sample_capability_map(morphs[-1], 100_000)
-    print(f"Time: {datetime.now() - start}")
+    morphs = sample_morph(1, 6, True)
+    benchmarks = []
+    for morph in morphs:
+        morph = morph.to("cuda")
+        _, benchmark = estimate_capability_map(morph, True)
+        benchmarks += [torch.tensor(benchmark)]
+        break
+
+    mean_benchmark = torch.stack(benchmarks).mean(dim=0, keepdim=True).tolist()
+    mean_benchmark[0][0] = int(mean_benchmark[0][0])
+    mean_benchmark[0][1] = int(mean_benchmark[0][1])
+    print(tabulate(mean_benchmark,
+                   headers=["Filled Cells", "Total Samples\n(Speed)", "Efficiency\n(Total)", "Efficiency\n(Unique)",
+                            "Efficiency\n(Collision)"], floatfmt=".4f", intfmt=","))
