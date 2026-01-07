@@ -2,7 +2,6 @@ import torch
 from beartype import beartype
 from jaxtyping import Float, jaxtyped
 from torch import Tensor
-import jax
 
 from scipy.spatial.transform import Rotation
 
