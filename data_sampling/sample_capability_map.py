@@ -8,7 +8,7 @@ from data_sampling.autotune_batch_size import get_batch_size
 from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics, LINK_RADIUS
 
 import data_sampling.se3 as se3
-from datetime import datetime, timedelta  # TODO remove
+from datetime import datetime, timedelta
 
 torch.set_float32_matmul_precision("high")
 
@@ -26,26 +26,22 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
     """
     dof = morph.shape[0]
     joint_limits = torch.zeros(dof,2, device="cuda")
-    for i in range(dof - 1):
-        alpha1, a1, d1 = morph[i]
-        alpha2, a2, d2 = morph[i + 1]
 
-        no_offset = d1 == 0
-        overlapping_offset = (a2.abs() - a1.abs() < 2 * LINK_RADIUS
-                              and (d1 - d2).abs() < 2 * LINK_RADIUS
-                              and alpha2 == 0)
+    alpha1, a1, d1 = morph[:-1].split(1, dim=-1)
+    alpha2, a2, d2 = morph[1:].split(1, dim=-1)
 
-        if a1 != 0 and a2 != 0 and (no_offset or overlapping_offset):
-            # Avoid immediate self-collisions
-            arc = torch.arcsin(2 * LINK_RADIUS / a2.abs())
-            joint_limits[i,0] = 2 * torch.pi - 2 * arc
-            if torch.sign(a1) == torch.sign(a2):
-                joint_limits[i,1] = -torch.pi + arc
-            else:
-                joint_limits[i,1] = arc
-        else:
-            joint_limits[i,0] = 2 * torch.pi
-            joint_limits[i,1] = -torch.pi
+    no_offset = d1 == 0
+    overlapping_offset = ((a2.abs() - a1.abs() < 2 * LINK_RADIUS) &
+                          (torch.sign(d1) != torch.sign(d2)) &
+                          (d1.abs() - d2.abs() < 2 * LINK_RADIUS) &
+                          (alpha2 == 0))
+    limited = (a1 != 0) & (a2 != 0) & (no_offset | overlapping_offset)
+    arc = torch.arcsin(2 * LINK_RADIUS / a2.abs())
+
+    joint_limits[:-1, 0:1] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)
+    joint_limits[:-1, 1:2] = torch.where(limited,
+                                       torch.where(torch.sign(a1) == torch.sign(a2), -torch.pi + arc, arc),
+                                       -torch.pi)
 
     return joint_limits
 
@@ -171,7 +167,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     indices = []
     n_batches = 0
     start = datetime.now()
-    while datetime.now() - start < timedelta(minutes=10):
+    while datetime.now() - start < timedelta(minutes=1):
         _, new_indices = compiled_sample_reachable_poses(batch_size, morph, joint_limits)
         indices += [new_indices.cpu()]
         n_batches += 1
@@ -220,13 +216,12 @@ if __name__ == "__main__":
     from data_sampling.sample_morph import sample_morph
 
     torch.manual_seed(1)
-    morphs = sample_morph(1, 6, True)
+    morphs = sample_morph(10, 6, True)
     benchmarks = []
     for morph in morphs:
         morph = morph.to("cuda")
         _, benchmark = estimate_capability_map(morph, True)
         benchmarks += [torch.tensor(benchmark)]
-        break
 
     mean_benchmark = torch.stack(benchmarks).mean(dim=0, keepdim=True).tolist()
     mean_benchmark[0][0] = int(mean_benchmark[0][0])
