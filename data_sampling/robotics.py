@@ -256,22 +256,27 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     # Capsule pair combinations
     i_idx, j_idx = torch.triu_indices(2 * dof, 2 * dof, offset=1, device=device)
 
+    # Skip capsule pairs if they are next to each other in the kinematic chain (Solely based on DOF)
+    adjacent = j_idx - i_idx == 1
+    i_idx = i_idx[~adjacent]
+    j_idx = j_idx[~adjacent]
+    num_pairs = len(i_idx)
+
     # Gather capsule endpoints
-    s1 = s_all[..., i_idx, :].reshape(-1, i_idx.shape[0], 3)
-    e1 = e_all[..., i_idx, :].reshape(-1, i_idx.shape[0], 3)
-    s2 = s_all[..., j_idx, :].reshape(-1, i_idx.shape[0], 3)
-    e2 = e_all[..., j_idx, :].reshape(-1, i_idx.shape[0], 3)
+    s1 = s_all[..., i_idx, :].reshape(-1, num_pairs, 3)
+    e1 = e_all[..., i_idx, :].reshape(-1, num_pairs, 3)
+    s2 = s_all[..., j_idx, :].reshape(-1, num_pairs, 3)
+    e2 = e_all[..., j_idx, :].reshape(-1, num_pairs, 3)
 
     # Compute signed distances
-    distances = v_signed_distance(s1, e1, radius, s2, e2, radius)
+    collisions = v_signed_distance(s1, e1, radius, s2, e2, radius) < 0
 
     # Ignore distances with missing capsules
-    missing_capsules = (torch.norm(s1 - e1, dim=-1) < EPS) | (torch.norm(s2 - e2, dim=-1) < EPS)
+    collisions &= (torch.norm(s1 - e1, dim=-1) > EPS) & (torch.norm(s2 - e2, dim=-1) > EPS)
     # Ignore adjacent capsules
-    adjacent = (torch.norm(e1 - s2, dim=-1) < EPS)
+    collisions &= torch.norm(e1 - s2, dim=-1) > EPS
 
-    collision_flags = ((distances < 0) & ~adjacent & ~missing_capsules).any(dim=-1)
-    return collision_flags.reshape(batch_shape)
+    return collisions.any(dim=-1).reshape(batch_shape)
 
 
 # @jaxtyped(typechecker=beartype)

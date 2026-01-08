@@ -24,73 +24,49 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
     Returns:
         Joint limits
     """
-    dof = morph.shape[0]
-    joint_limits = torch.zeros(dof,2, device="cuda")
+    joint_limits = torch.zeros(morph.shape[0], 2, device=morph.device)
 
     alpha1, a1, d1 = morph[:-1].split(1, dim=-1)
     alpha2, a2, d2 = morph[1:].split(1, dim=-1)
 
     no_offset = d1 == 0
-    overlapping_offset = ((a2.abs() - a1.abs() < 2 * LINK_RADIUS) &
-                          (torch.sign(d1) != torch.sign(d2)) &
+    overlapping_offset = ((alpha2 == 0) &
+                          (a2.abs() - a1.abs() < 2 * LINK_RADIUS) &
                           (d1.abs() - d2.abs() < 2 * LINK_RADIUS) &
-                          (alpha2 == 0))
+                          (torch.sign(d1) != torch.sign(d2)))
     limited = (a1 != 0) & (a2 != 0) & (no_offset | overlapping_offset)
     arc = torch.arcsin(2 * LINK_RADIUS / a2.abs())
 
     joint_limits[:-1, 0:1] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)
     joint_limits[:-1, 1:2] = torch.where(limited,
-                                       torch.where(torch.sign(a1) == torch.sign(a2), -torch.pi + arc, arc),
-                                       -torch.pi)
+                                         torch.where(torch.sign(a1) == torch.sign(a2), -torch.pi + arc, arc),
+                                         -torch.pi)
 
     return joint_limits
 
-# @jaxtyped(typechecker=beartype)
-def sample_joints(batch_size: int,
-                  morph: Float[Tensor, "dof 3"],
-                  joint_limits: Float[Tensor, "batch_size dof 2"]
-                  ) -> Float[Tensor, "{batch_size} {dof}"]:
-    """
-    Sample random joint configurations for the robot.
-
-    Args:
-        batch_size: Number of joint configurations to sample
-        morph: MDH parameters encoding the robot geometry.
-        joint_limits: Joint limits to avoid self-collisions
-
-    Returns:
-        Newly sampled joint configurations
-    """
-    dof = morph.shape[0]
-    joints = torch.rand(batch_size, dof, device="cuda") * joint_limits[..., 0] + joint_limits[..., 1]
-
-    return joints
-
 
 # @jaxtyped(typechecker=beartype)
-def sample_reachable_poses(batch_size: int,
-                           morph: Float[Tensor, "batch_size dof 3"],
-                           joint_limits: Float[Tensor, "batch_size dof 2"]) -> tuple[
-    Float[Tensor, "batch_size 4 4"],
-    Int[Tensor, "batch_size"],
+def sample_reachable_poses(morph: Float[Tensor, "dof 3"], joint_limits: Float[Tensor, "batch_size dof 2"]) -> tuple[
+    Float[Tensor, "n_valid 4 4"],
+    Int[Tensor, "n_valid"],
 ]:
     """
     Sample end effector poses for the robot and compute their discretised cell index.
 
     Args:
-        batch_size: Number of end effector poses to sample.
         morph: MDH parameters encoding the robot geometry.
-        joint_limits: Joint limits to avoid self-collisions
+        joint_limits: Joint limits that prevent most self-collisions.
 
     Returns:
         Reachable end effector poses and their respective cell indices.
     """
-    joints = sample_joints(batch_size, morph[0], joint_limits)
-    poses = forward_kinematics(morph, joints.unsqueeze(-1))
+    joints = torch.rand(*joint_limits.shape[:-1], 1, device=morph.device) * joint_limits[..., 0:1] + joint_limits[..., 1:2]
+    poses = forward_kinematics(morph, joints)
     self_collision = collision_check(morph, poses)
     poses = poses[:, -1, :, :][~self_collision]
     cell_indices = se3.index(poses)
     return poses, cell_indices
+
 
 compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
@@ -108,9 +84,10 @@ def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor
     """
     joint_limits = get_joint_limits(morph)
     probe_size = 2048
-    args = [probe_size, morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+    args = [morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
     batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
-    poses, _ = compiled_sample_reachable_poses(batch_size, morph.unsqueeze(0).expand(batch_size, -1, -1), joint_limits.unsqueeze(0).expand(batch_size, -1, -1))
+    poses, _ = compiled_sample_reachable_poses(morph.unsqueeze(0).expand(batch_size, -1, -1),
+                                               joint_limits.unsqueeze(0).expand(batch_size, -1, -1))
     centre = torch.mean(poses[:, :3, 3], dim=0)
     radius = torch.norm(poses[:, :3, 3] - centre, dim=1).max().item()
 
@@ -157,20 +134,31 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     """
     joint_limits = get_joint_limits(morph)
     probe_size = 2048
-    args = [probe_size, morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+    args = [morph.unsqueeze(0).expand(probe_size, -1, -1),
+            joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
     batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
     morph = morph.unsqueeze(0).expand(batch_size, -1, -1)
     joint_limits = joint_limits.unsqueeze(0).expand(batch_size, -1, -1)
     if debug:  # Warm-Up for benchmarking
-        _ = compiled_sample_reachable_poses(batch_size, morph, joint_limits)
+        _ = compiled_sample_reachable_poses(morph, joint_limits)
 
     indices = []
+    cuda_indices = []
     n_batches = 0
     start = datetime.now()
     while datetime.now() - start < timedelta(minutes=1):
-        _, new_indices = compiled_sample_reachable_poses(batch_size, morph, joint_limits)
-        indices += [new_indices.cpu()]
+        _, new_indices = compiled_sample_reachable_poses(morph, joint_limits)
+        cuda_indices += [new_indices]
         n_batches += 1
+        if len(cuda_indices) >= 1000:
+            transfer = torch.cat(cuda_indices)
+            pinned = torch.empty(transfer.shape, dtype=transfer.dtype, pin_memory=True)
+            pinned.copy_(transfer, non_blocking=True)
+            indices += [pinned]
+            cuda_indices = []
+
+    if len(cuda_indices) > 0:
+        indices += [torch.cat(cuda_indices).cpu()]
 
     indices = torch.cat(indices)
     collision_free_samples = indices.shape[0]
