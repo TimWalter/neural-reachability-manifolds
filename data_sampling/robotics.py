@@ -166,25 +166,25 @@ def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tens
 
     p1_interior = s1 + t1 * l1
     p2_interior = s2 + t2 * l2
-    d_interior = (p1_interior - p2_interior).norm(dim=1, keepdim=True)
+    d_interior = ((p1_interior - p2_interior)**2).sum(dim=1, keepdim=True)
 
     # Endpoint–segment candidates
     t_s1 = torch.clamp(((s1 - s2) * l2).sum(dim=1, keepdim=True) / (beta + 1e-10), 0, 1)
 
     p_s1 = s2 + t_s1 * l2
-    d_s1 = (s1 - p_s1).norm(dim=1, keepdim=True)
+    d_s1 = ((s1 - p_s1)**2).sum(dim=1, keepdim=True)
 
     t_e1 = torch.clamp(((e1 - s2) * l2).sum(dim=1, keepdim=True) / (beta + 1e-10), 0, 1)
     p_e1 = s2 + t_e1 * l2
-    d_e1 = (e1 - p_e1).norm(dim=1, keepdim=True)
+    d_e1 = ((e1 - p_e1)**2).sum(dim=1, keepdim=True)
 
     t_s2 = torch.clamp(((s2 - s1) * l1).sum(dim=1, keepdim=True) / (alpha + 1e-10), 0, 1)
     p_s2 = s1 + t_s2 * l1
-    d_s2 = (s2 - p_s2).norm(dim=1, keepdim=True)
+    d_s2 = ((s2 - p_s2)**2).sum(dim=1, keepdim=True)
 
     t_e2 = torch.clamp(((e2 - s1) * l1).sum(dim=1, keepdim=True) / (alpha + 1e-10), 0, 1)
     p_e2 = s1 + t_e2 * l1
-    d_e2 = (e2 - p_e2).norm(dim=1, keepdim=True)
+    d_e2 = ((e2 - p_e2)**2).sum(dim=1, keepdim=True)
 
     # Combine endpoint candidates
     d_endpoints = torch.stack([d_s1, d_e1, d_s2, d_e2]).min(dim=0).values
@@ -194,7 +194,7 @@ def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tens
                                  d_endpoints,
                                  d_interior).squeeze(dim=1)
 
-    return point_distance - r1 - r2
+    return point_distance - (r1 + r2)**2
 
 
 v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, None, 0, 0, None))
