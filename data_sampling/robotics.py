@@ -232,6 +232,7 @@ def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     e_all = torch.stack([e_a, e_d], dim=-2).flatten(-3, -2)
     return s_all, e_all
 
+PAIR_COMBINATIONS = [torch.triu_indices(2 * dof, 2 * dof, offset=2) for dof in range(1,8)]
 
 # #@jaxtyped(typechecker=beartype)
 def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
@@ -248,19 +249,17 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     Returns:
         A boolean indicating whether each configuration is in collision.
     """
+    global PAIR_COMBINATIONS
+    if mdh.device != PAIR_COMBINATIONS[0].device:
+        PAIR_COMBINATIONS = [pair.to(mdh.device) for pair in PAIR_COMBINATIONS]
+
     *batch_shape, dof, _ = mdh.shape
-    device = mdh.device
 
     s_all, e_all = get_capsules(mdh, poses)
 
     # Capsule pair combinations
-    i_idx, j_idx = torch.triu_indices(2 * dof, 2 * dof, offset=1, device=device)
-
-    # Skip capsule pairs if they are next to each other in the kinematic chain (Solely based on DOF)
-    adjacent = j_idx - i_idx == 1
-    i_idx = i_idx[~adjacent]
-    j_idx = j_idx[~adjacent]
-    num_pairs = len(i_idx)
+    i_idx, j_idx = PAIR_COMBINATIONS[dof-1]
+    num_pairs = i_idx.shape[0]
 
     # Gather capsule endpoints
     s1 = s_all[..., i_idx, :].reshape(-1, num_pairs, 3)
