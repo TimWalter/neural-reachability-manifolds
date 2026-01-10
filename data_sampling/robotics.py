@@ -145,59 +145,32 @@ def unique_indices(indices: Int[Tensor, "batch"],
 
 
 # @jaxtyped(typechecker=beartype)
-def signed_distance_capsule_capsule(s1: Float[Tensor, "batch 3"], e1: Float[Tensor, "batch 3"], r1: float,
-                                    s2: Float[Tensor, "batch 3"], e2: Float[Tensor, "batch 3"], r2: float) \
-        -> Float[Tensor, "batch"]:
+def signed_distance_capsule_capsule(s1: Float[Tensor, "*batch 3"], e1: Float[Tensor, "*batch 3"], r1: float,
+                                    s2: Float[Tensor, "*batch 3"], e2: Float[Tensor, "*batch 3"], r2: float) \
+        -> Float[Tensor, "*batch"]:
     l1 = e1 - s1
     l2 = e2 - s2
     ds = s1 - s2
 
-    alpha = (l1 * l1).sum(dim=1, keepdim=True)
-    beta = (l2 * l2).sum(dim=1, keepdim=True)
-    gamma = (l1 * l2).sum(dim=1, keepdim=True)
-    delta = (l1 * ds).sum(dim=1, keepdim=True)
-    epsilon = (l2 * ds).sum(dim=1, keepdim=True)
+    alpha = (l1 * l1).sum(dim=-1, keepdim=True)
+    beta = (l2 * l2).sum(dim=-1, keepdim=True)
+    gamma = (l1 * l2).sum(dim=-1, keepdim=True)
+    delta = (l1 * ds).sum(dim=-1, keepdim=True)
+    epsilon = (l2 * ds).sum(dim=-1, keepdim=True)
 
     det = alpha * beta - gamma ** 2
 
-    # Unconstrained solution
-    t1 = (gamma * epsilon - beta * delta) / (det + 1e-10)
-    t2 = (gamma * delta - alpha * epsilon) / (det + 1e-10)
+    t1 = torch.clamp((gamma * epsilon - beta * delta) / (det + 1e-10), 0.0, 1.0)
+    t2 = torch.clamp((gamma * t1 + epsilon) / (beta + 1e-10), 0.0, 1.0)
 
-    p1_interior = s1 + t1 * l1
-    p2_interior = s2 + t2 * l2
-    d_interior = ((p1_interior - p2_interior)**2).sum(dim=1, keepdim=True)
+    t1 = torch.where((t2 == 0.0) | (t2 == 1.0), torch.clamp((t2 * gamma - delta) / (alpha + 1e-10), 0.0, 1.0), t1)
 
-    # Endpoint–segment candidates
-    t_s1 = torch.clamp(((s1 - s2) * l2).sum(dim=1, keepdim=True) / (beta + 1e-10), 0, 1)
+    c1 = s1 + t1 * l1
+    c2 = s2 + t2 * l2
 
-    p_s1 = s2 + t_s1 * l2
-    d_s1 = ((s1 - p_s1)**2).sum(dim=1, keepdim=True)
+    point_distance = ((c1 - c2) ** 2).sum(dim=-1)
 
-    t_e1 = torch.clamp(((e1 - s2) * l2).sum(dim=1, keepdim=True) / (beta + 1e-10), 0, 1)
-    p_e1 = s2 + t_e1 * l2
-    d_e1 = ((e1 - p_e1)**2).sum(dim=1, keepdim=True)
-
-    t_s2 = torch.clamp(((s2 - s1) * l1).sum(dim=1, keepdim=True) / (alpha + 1e-10), 0, 1)
-    p_s2 = s1 + t_s2 * l1
-    d_s2 = ((s2 - p_s2)**2).sum(dim=1, keepdim=True)
-
-    t_e2 = torch.clamp(((e2 - s1) * l1).sum(dim=1, keepdim=True) / (alpha + 1e-10), 0, 1)
-    p_e2 = s1 + t_e2 * l1
-    d_e2 = ((e2 - p_e2)**2).sum(dim=1, keepdim=True)
-
-    # Combine endpoint candidates
-    d_endpoints = torch.stack([d_s1, d_e1, d_s2, d_e2]).min(dim=0).values
-
-    # Piecewise definition
-    point_distance = torch.where((det == 0) | (t1 < 0) | (t1 > 1) | (t2 < 0) | (t2 > 1),
-                                 d_endpoints,
-                                 d_interior).squeeze(dim=1)
-
-    return point_distance - (r1 + r2)**2
-
-
-v_signed_distance = torch.vmap(signed_distance_capsule_capsule, in_dims=(0, 0, None, 0, 0, None))
+    return point_distance - (r1 + r2) ** 2
 
 
 # @jaxtyped(typechecker=beartype)
@@ -258,7 +231,7 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     s_all, e_all = get_capsules(mdh, poses)
 
     # Capsule pair combinations
-    i_idx, j_idx = PAIR_COMBINATIONS[dof-1]
+    i_idx, j_idx = PAIR_COMBINATIONS[dof - 1]
     num_pairs = i_idx.shape[0]
 
     # Gather capsule endpoints
@@ -268,7 +241,7 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     e2 = e_all[..., j_idx, :].reshape(-1, num_pairs, 3)
 
     # Compute signed distances
-    collisions = v_signed_distance(s1, e1, radius, s2, e2, radius) < 0
+    collisions = signed_distance_capsule_capsule(s1, e1, radius, s2, e2, radius) < 0
 
     # Ignore distances with missing capsules
     collisions &= (torch.norm(s1 - e1, dim=-1) > EPS) & (torch.norm(s2 - e2, dim=-1) > EPS)
