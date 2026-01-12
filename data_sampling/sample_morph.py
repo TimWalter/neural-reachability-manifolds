@@ -137,7 +137,7 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
             morph[row_indices, axes_choice + 2, 1] = 0
             morph[row_indices, 3 - axes_choice, 0] = 0
         elif dof == 6:  # Special 6 DOF (3 Parallel Inner Axes)
-            axes_choice = torch.randint(2, 4, (batch_size,))
+            axes_choice = torch.full((batch_size,), 2)
             indices_to_slice = axes_choice.unsqueeze(-1) + torch.arange(2)
             row_indices = torch.arange(batch_size).unsqueeze(-1)
             morph[row_indices, indices_to_slice, 0] = 0

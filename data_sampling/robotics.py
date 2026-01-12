@@ -301,7 +301,7 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
     joint_transforms = torch.cat((global_coords, global_coords[-1].unsqueeze(0)), dim=0)
     eaik_bot = HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
     if not eaik_bot.hasKnownDecomposition():
-        raise RuntimeError("Robot is not analytically solvable.")
+        raise RuntimeError(f"Robot is not analytically solvable. {mdh}")
     solutions = eaik_bot.IK_batched(poses.cpu().numpy())
     joints = [sol.Q for sol in solutions if sol.num_solutions() != 0]
     if not joints:
