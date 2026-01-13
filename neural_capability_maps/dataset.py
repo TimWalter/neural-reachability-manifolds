@@ -1,4 +1,3 @@
-import math
 import random
 import bisect
 from pathlib import Path
@@ -7,7 +6,7 @@ import zarr
 import torch
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import Float, jaxtyped, Int, Bool
+from jaxtyping import Float, jaxtyped, Int, Int64
 
 from data_sampling.se3 import cell_vec
 
@@ -166,7 +165,11 @@ class Dataset:
             for local_batch_idx in batch_order:
                 yield self[local_batch_idx + chunk_idx * (self.chunk_size // self.batch_size)]
 
-    def get_random_batch(self):
+    def get_random_batch(self) -> tuple[
+        Float[Tensor, "batch dof 3"],
+        Float[Tensor, "batch 9"],
+        Float[Tensor, "batch"]
+    ]:
         batch_idx = torch.randint(0, self.num_batches, (1,)).item()
         return self[batch_idx]
 
@@ -177,7 +180,7 @@ class TrainingSet(Dataset):
         super().__init__(batch_size, shuffle, "train")
 
     @jaxtyped(typechecker=beartype)
-    def _get_pose(self, cell_idx: Int[Tensor, "batch 1"]) -> Float[Tensor, " batch 9"]:
+    def _get_pose(self, cell_idx: Int64[Tensor, "batch 1"]) -> Float[Tensor, " batch 9"]:
         """
        Retrieve the pose from the batch chunk, which is a cell index in training.
 
