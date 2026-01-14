@@ -6,7 +6,7 @@ import zarr
 import torch
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import Float, jaxtyped, Int, Int64
+from jaxtyping import Float, jaxtyped, Int, Int64, Bool
 
 from data_sampling.se3 import cell_vec
 
@@ -48,6 +48,8 @@ class Dataset:
 
         self.current_chunk_idx = None
         self.current_chunk = None
+
+        self.current_batch_idx = None
 
         assert self.chunk_size % self.batch_size == 0, \
             f"Chunk size ({self.chunk_size}) must be a multiple of batch size ({self.batch_size})"
@@ -137,13 +139,13 @@ class Dataset:
     def __getitem__(self, batch_idx: int) -> tuple[
         Float[Tensor, "batch dof 3"],
         Float[Tensor, "batch 9"],
-        Float[Tensor, "batch"]
+        Bool[Tensor, "batch"]
     ]:
         batch = self._get_batch(batch_idx)
 
         morph = self._get_morph(batch[:, 0].long())
         pose = self._get_pose(batch[:, 1:-1])
-        label = batch[:, -1].float()
+        label = batch[:, -1].bool()
 
         return morph.pin_memory(), pose.pin_memory(), label.pin_memory()
 
@@ -163,7 +165,8 @@ class Dataset:
             if self.shuffle:
                 random.shuffle(batch_order)
             for local_batch_idx in batch_order:
-                yield self[local_batch_idx + chunk_idx * (self.chunk_size // self.batch_size)]
+                self.current_batch_idx = local_batch_idx + chunk_idx * (self.chunk_size // self.batch_size)
+                yield self[self.current_batch_idx]
 
     def get_random_batch(self) -> tuple[
         Float[Tensor, "batch dof 3"],
@@ -171,6 +174,18 @@ class Dataset:
         Float[Tensor, "batch"]
     ]:
         batch_idx = torch.randint(0, self.num_batches, (1,)).item()
+        return self[batch_idx]
+
+    def get_semi_random_batch(self) -> tuple[
+        Float[Tensor, "batch dof 3"],
+        Float[Tensor, "batch 9"],
+        Float[Tensor, "batch"]
+    ]:
+        """
+        Get a random batch within the current chunk.
+        """
+        batch_idx = self.current_chunk_idx * self.chunk_size // self.batch_size
+        batch_idx += torch.randint(0, self.num_batches // self.num_chunks, (1,)).item()
         return self[batch_idx]
 
 
