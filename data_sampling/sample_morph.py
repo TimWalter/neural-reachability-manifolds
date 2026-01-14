@@ -41,7 +41,7 @@ def _sample_link_twist(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Tens
     link_twist_choice = torch.rand(*link_type.shape)
     link_twist = link_twist_options[(link_twist_choice > 1 / 3).to(torch.int64) + (link_twist_choice > 2 / 3).to(torch.int64)]
 
-    mask = (link_type == 1) | (link_type == 3)
+    mask = link_type == 3
     link_twist[mask] = link_twist_options[1 + (link_twist_choice[mask] > 1 / 2).to(torch.int64)]
 
     return link_twist
