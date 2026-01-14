@@ -24,7 +24,10 @@ class Model(nn.Module):
         metadata_path = model_dir / folder / 'metadata.json'
         metadata = json.load(open(metadata_path, 'r'))
 
-        model = cls(**metadata["model"])
+        model = cls(**metadata["hyperparameter"])
         model_folder = str(model_dir / folder)
         model.load_state_dict(torch.load(next(Path(model_folder).glob('*.pth'))))
         return model
+
+from .occupancy_network import OccupancyNetwork
+from .ball import Ball

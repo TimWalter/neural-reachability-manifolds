@@ -3,10 +3,10 @@ import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float
 
-from neural_capability_maps.baselines.model import Model
+from neural_capability_maps.model import Model
 
 
-class BallBaseline(Model):
+class Ball(Model):
     """
     Baseline for reachability prediction by fitting a ball in R3.
 
