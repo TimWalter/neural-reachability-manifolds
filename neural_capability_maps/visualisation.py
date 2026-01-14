@@ -7,7 +7,7 @@ from beartype import beartype
 from scipy.spatial.transform import Rotation
 import seaborn as sns
 
-from data_sampling.robotics import transformation_matrix, get_capsules, LINK_RADIUS
+from data_sampling.robotics import get_capsules, LINK_RADIUS
 import math
 
 @jaxtyped(typechecker=beartype)
@@ -109,8 +109,18 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     z_axes = poses[:, :3, 2]
     x_axes = poses[:, :3, 0]
 
-    a = mdh[-1, 1]
-    d = mdh[-1, 2]
+    a = mdh[..., -1, 1:2]
+    d = mdh[..., -1, 2:3]
+
+    if len(mdh.shape) >2:
+        idx = -1
+        mask =(a[:,0]==0)&(d[:,0]==0)
+        while torch.any(mask):
+            idx -= 1
+            a[mask] = mdh[mask, idx, 1:2]
+            d[mask] = mdh[mask, idx, 2:3]
+            mask =(a==0)&(d==0)
+
 
     # Calculate start points
     z_ends = origins - (z_axes * 0.025 * (d / (a + d)))
