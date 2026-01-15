@@ -65,6 +65,9 @@ def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
     Returns:
         Cell orientation
     """
+    global _CELLS
+    if index.device != _CELLS.device:
+        _CELLS = _CELLS.to(index.device)
     return _CELLS[index]
 
 
