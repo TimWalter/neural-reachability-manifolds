@@ -81,7 +81,7 @@ class Logger:
     @staticmethod
     def compute_metrics(logit: Float[Tensor, "batch"], label: Bool[Tensor, "batch"]) -> dict:
         (true_positives, false_negatives), (false_positives, true_negatives) = binary_confusion_matrix(logit, label)
-        accuracy = true_positives / 2 + true_negatives / 2
+        accuracy = ((torch.nn.Sigmoid()(logit) > 0.5) == label).cpu().sum() / label.shape[0] * 100
 
         hist, bin_edges = np.histogram(torch.nn.Sigmoid()(logit).cpu().numpy(), bins=64, range=(0.0, 1.0))
 
@@ -120,7 +120,7 @@ class Logger:
             fig.add_trace(t)
         metrics["Poses"] = fig
 
-        metrics["Reachable [%]"] = label.sum().item() / label.shape[0]
+        metrics["Reachable [%]"] = label.sum().item() / label.shape[0] * 100
 
         return metrics
 
@@ -144,7 +144,7 @@ class Logger:
         data = self.assign_space(data, "Training")
 
         if batch_idx % 1000 == 0:
-            data |= self.assign_space(self.compute_input_metrics(morph, pose, label), "Input")
+            data |= self.assign_space(self.compute_input_metrics(morph, pose, label), "TrainingsInput")
         if batch_idx % 100 == 0:
             logit = self.model(self.fix[1], self.fix[0])
             loss = self.loss_function(logit, self.fix[2].float())
@@ -184,19 +184,32 @@ class Logger:
             self.buffer["loss"] = 0.0
         if "logit" not in self.buffer:
             self.buffer["logit"] = []
+        if "morph" not in self.buffer:
+            self.buffer["morph"] = []
+        if "pose" not in self.buffer:
+            self.buffer["pose"] = []
         if "label" not in self.buffer:
             self.buffer["label"] = []
 
-        self.buffer["loss"] += loss
-        self.buffer["logit"] += [logit.cpu()]
+        self.buffer["morph"] += [morph.cpu()]
+        self.buffer["pose"] += [pose.cpu()]
         self.buffer["label"] += [label.cpu()]
+        self.buffer["logit"] += [logit.cpu()]
+        self.buffer["loss"] += loss
 
         if batch_idx + 1 == len(self.validation_set):
+            morph = torch.cat(self.buffer["morph"])
+            pose = torch.cat(self.buffer["pose"])
+            label = torch.cat(self.buffer["label"])
+
             data = {"Loss": self.buffer["loss"] / len(self.validation_set) / self.batch_size}
-            data |= self.compute_metrics(torch.cat(self.buffer["logit"]), torch.cat(self.buffer["label"]))
+            data |= self.compute_metrics(torch.cat(self.buffer["logit"]), label)
+            data = self.assign_space(data, "Validation")
+
+            data |= self.assign_space(self.compute_input_metrics(morph, pose, label), "ValidationInput")
 
             step = (epoch + 1) * len(self.training_set)
-            self.run.log(data=self.assign_space(data, "Validation"), step=step, commit=False)
+            self.run.log(data=data, step=step, commit=False)
             self.buffer = {}
 
 
