@@ -21,8 +21,8 @@ class Ball(Model):
         self.centre = nn.Parameter(torch.tensor([0.0, 0.0, 0.0]))
         self.radius = nn.Parameter(torch.tensor(0.75))
 
-    def forward(self, pose: Float[Tensor, "batch 9"], _: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch 1"]:
-        distance = torch.norm(pose[:, :3] - self.centre, dim=1, keepdim=True)
+    def forward(self, pose: Float[Tensor, "batch 9"], _: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch"]:
+        distance = torch.norm(pose[:, :3] - self.centre, dim=1)
         logits = self.radius - distance
 
         return logits
