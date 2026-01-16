@@ -1,13 +1,15 @@
 import warnings
+
 warnings.filterwarnings("ignore", message=".*Dynamo detected a call to a `functools.lru_cache`.*")
 import torch
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import Float, jaxtyped, Int, Bool
+from jaxtyping import Float, jaxtyped, Bool, Int64
 from tabulate import tabulate
 
 from data_sampling.autotune_batch_size import get_batch_size
-from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics, LINK_RADIUS
+from data_sampling.robotics import forward_kinematics, collision_check, analytical_inverse_kinematics, LINK_RADIUS, \
+    transformation_matrix, get_capsules, EPS
 
 import data_sampling.se3 as se3
 from datetime import datetime, timedelta
@@ -28,21 +30,58 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
     """
     joint_limits = torch.zeros(morph.shape[0], 2, device=morph.device)
 
-    alpha1, a1, d1 = morph[:-1].split(1, dim=-1)
-    alpha2, a2, d2 = morph[1:].split(1, dim=-1)
+    extended_morph = torch.cat([torch.zeros_like(morph[:1]), morph])
+    alpha0, a0, d0 = extended_morph[:-2].split(1, dim=-1)
+    alpha1, a1, d1 = extended_morph[1:-1].split(1, dim=-1)
 
-    no_offset = d1 == 0
-    overlapping_offset = ((alpha2 == 0) &
-                          (a2.abs() - a1.abs() < 2 * LINK_RADIUS) &
-                          (d1.abs() - d2.abs() < 2 * LINK_RADIUS) &
-                          (torch.sign(d1) != torch.sign(d2)))
-    limited = (a1 != 0) & (a2 != 0) & (no_offset | overlapping_offset)
-    arc = torch.arcsin(2 * LINK_RADIUS / a2.abs())
+    coordinate_fix = torch.eye(4, device=morph.device, dtype=morph.dtype).repeat(morph.shape[0] - 1, 1, 1)
+    wrist = (a1[:, 0] == 0) & (d1[:, 0] == 0)
+    coordinate_fix[wrist] = transformation_matrix(alpha0, a0, d0, torch.zeros_like(d0))[wrist]
 
-    joint_limits[:-1, 0:1] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)
-    joint_limits[:-1, 1:2] = torch.where(limited,
-                                         torch.where(torch.sign(a1) == torch.sign(a2), -torch.pi + arc, arc),
-                                         -torch.pi)
+    plane_normal = torch.stack([
+        torch.zeros_like(alpha1),
+        -torch.sin(alpha1),
+        torch.cos(alpha1),
+        torch.zeros_like(alpha1)], dim=2)
+    plane_anchor = torch.stack([
+        a1,
+        -d1 * torch.sin(alpha1),
+        d1 * torch.cos(alpha1),
+        torch.ones_like(alpha1)], dim=2)
+
+    plane_normal = torch.sum(coordinate_fix * plane_normal, dim=-1)[:, :3]
+    plane_anchor = torch.sum(coordinate_fix * plane_anchor, dim=-1)[:, :3]
+
+    stacked_morph = torch.stack([extended_morph[:-2], extended_morph[1:-1], extended_morph[2:]], dim=1)
+    stacked_morph[~wrist, 0, :] = 0.0
+    start, end = get_capsules(stacked_morph, joints=torch.zeros(*stacked_morph.shape[:-1], 1, device=morph.device))
+    capsules = end - start
+
+    # Get closest non-zero capsule before joint
+    pre_capsule = capsules[:, 3, :]
+    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 2, :]
+    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 1, :]
+    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 0, :]
+
+    # Get closest non-zero capsule after joint
+    post_capsule = capsules[:, -2, :]
+    post_capsule[mask] = capsules[mask := post_capsule.norm(dim=-1) < 1e-6, -1, :]
+
+    in_plane = ((pre_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
+    in_plane &= ((post_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
+
+    limited = (pre_capsule.norm(dim=-1) > EPS) & (post_capsule.norm(dim=-1) > EPS) & in_plane
+
+    mask = post_capsule.norm(dim=-1) > pre_capsule.norm(dim=-1)
+    arc = torch.arcsin(2 * LINK_RADIUS / post_capsule.norm(dim=-1))
+    arc[mask] = torch.arctan(2 * LINK_RADIUS / pre_capsule.norm(dim=-1))[mask]
+
+    joint_limits[:-1, 0] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)  # Range
+    angle = torch.atan2(torch.sum(torch.cross(pre_capsule, post_capsule, dim=1) * plane_normal, dim=1),
+                        torch.sum(pre_capsule * post_capsule, dim=1))
+    # if their angle becomes pi, they collide and are antiparallel
+    angle = torch.atan2(torch.sin(torch.pi - angle), torch.cos(torch.pi - angle))
+    joint_limits[:-1, 1] = torch.where(limited, angle + arc, -torch.pi)  # Offset
 
     return joint_limits
 
@@ -50,7 +89,7 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
 # @jaxtyped(typechecker=beartype)
 def sample_reachable_poses(morph: Float[Tensor, "dof 3"], joint_limits: Float[Tensor, "batch_size dof 2"]) -> tuple[
     Float[Tensor, "n_valid 4 4"],
-    Int[Tensor, "n_valid"],
+    Int64[Tensor, "n_valid"],
 ]:
     """
     Sample end effector poses for the robot and compute their discretised cell index.
@@ -85,20 +124,14 @@ def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor
     Returns:
         Center and radius of the reachable ball.
     """
-    joint_limits = get_joint_limits(morph)
-    probe_size = 2048
-    args = [morph.unsqueeze(0).expand(probe_size, -1, -1), joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
-    batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
-    poses, _ = compiled_sample_reachable_poses(morph.unsqueeze(0).expand(batch_size, -1, -1),
-                                               joint_limits.unsqueeze(0).expand(batch_size, -1, -1))
-    centre = torch.mean(poses[:, :3, 3], dim=0)
-    radius = torch.norm(poses[:, :3, 3] - centre, dim=1).max().item()
+    centre = transformation_matrix(morph[0, 0:1], morph[0, 1:2], morph[0, 2:3], torch.zeros_like(morph[0, 2:3]))[:3, 3]
+    radius = torch.sqrt(morph[:, 1] ** 2 + morph[:, 2] ** 2).sum() - morph[0, 2]
 
-    return centre, radius
+    return centre.cpu(), radius.item()
 
 
 def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False) -> \
-        Int[Tensor, " num_samples"] | tuple[Int[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
+        Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
     Fill up the discretised cells using FK until convergence. All unfilled cells are assumed to be unreachable.
@@ -154,7 +187,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
 
 # @jaxtyped(typechecker=beartype)
 def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> tuple[
-    Int[Tensor, " num_samples"],
+    Int64[Tensor, " num_samples"],
     Bool[Tensor, " num_samples"]
 ]:
     """
@@ -167,7 +200,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> 
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    morph = morph.to("cuda:1")
+    morph = morph.to("cuda")
 
     r_indices = estimate_capability_map(morph)
 
@@ -192,7 +225,7 @@ def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_sample
     Returns:
         Poses and labels encoding the discretised capability map
     """
-    morph = morph.to("cuda:1")
+    morph = morph.to("cuda")
 
     centre, radius = estimate_reachable_ball(morph)
     poses = se3.random_ball(num_samples, centre, radius)

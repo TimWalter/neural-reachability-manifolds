@@ -1,31 +1,56 @@
 import torch
-from data_sampling.robotics import forward_kinematics, collision_check, LINK_RADIUS
+from data_sampling.sample_morph import sample_morph
+from data_sampling.sample_capability_map import get_joint_limits
+from data_sampling.robotics import forward_kinematics, collision_check
 
-def test_immediate_self_collision():
-    a_list = torch.rand(100) * 0.9 - 0.45
-    a_list += torch.sign(a_list) * 2 * LINK_RADIUS
-    for a in a_list:
-        temp = torch.tensor([
-            [0.0, 0.5, 0.0],
-            [0.0, a, 0.0],
-            [0.0, 0.0, 0.05]
-        ])
-        arc = torch.arcsin(2*LINK_RADIUS/a.abs())
-        range = 2*torch.pi - 2*arc
-        if a > 0: # same sign
-            offset = -torch.pi + arc
-        else: # different sign
-            offset = arc
 
-        joints = torch.linspace(-torch.pi, torch.pi, 1000)
-        if offset + range > torch.pi:
-            prediction = (joints < offset) & (joints > torch.atan2(torch.sin(offset + range), torch.cos(offset + range)))
-        else:
-            prediction = (joints < offset) | (joints > offset + range)
-        joints = torch.stack([joints, torch.zeros_like(joints), torch.zeros_like(joints)], dim=1)
+def test_scissor_collision():
+    morphs = sample_morph(100, 6, True)
+    for morph_idx, morph in enumerate(morphs):
+        joint_limits = get_joint_limits(morph)
 
-        pose = forward_kinematics(temp.unsqueeze(0).expand(1000, -1, -1), joints.unsqueeze(-1))
+        extended_morph = torch.cat([torch.zeros_like(morph[:1]), morph])
+        alpha0, a0, d0 = extended_morph[:-2].split(1, dim=-1)
+        alpha1, a1, d1 = extended_morph[1:-1].split(1, dim=-1)
+        alpha2, a2, d2 = extended_morph[2:].split(1, dim=-1)
+        wrist = (a1[:,0] == 0) & (d1[:,0] == 0)
+        limited = joint_limits[:-1, 0] !=  2 * torch.pi
+        for joint_idx in range(morph.shape[0] - 1):
 
-        collision = collision_check(temp.unsqueeze(0).expand(1000, -1, -1), pose)
+            if limited[joint_idx]:
+                isolated_morph = morph[joint_idx - (1 if wrist[joint_idx] else 0):joint_idx + 2, :].clone()
+                if a2[joint_idx] != 0:
+                    isolated_morph[-1, 2] = 0
+                if wrist[joint_idx]:
+                    if d0[joint_idx] != 0:
+                        isolated_morph[0, 1] = 0
+                else:
+                    if d1[joint_idx] != 0:
+                        isolated_morph[0, 1] = 0
+                collision_detector = torch.tensor([[0.0, 0.0, 1e-2]])
+                isolated_morph = torch.cat([collision_detector, isolated_morph, collision_detector], dim=0)
 
-        assert (collision == prediction).all()
+                isolated_morph = isolated_morph.unsqueeze(0).expand(100, -1, -1)
+                # Account for the collision detector
+                damped_joint_limits = joint_limits[joint_idx].clone()
+                damped_joint_limits[0] -= torch.pi / 10
+                damped_joint_limits[1] += torch.pi / 20
+                non_colliding_joints = torch.rand(100, isolated_morph.shape[1], 1,
+                                                  device=morph.device) * damped_joint_limits[0:1] + damped_joint_limits[
+                                           1:2]
+
+                poses = forward_kinematics(isolated_morph, non_colliding_joints)
+                critical_distance = collision_check(isolated_morph, poses, debug=True)
+                assert (critical_distance > -1e-2).all(), f"{morph_idx}, {joint_idx} {(critical_distance < 0.0).nonzero()}"
+
+                colliding_joints = torch.zeros(2, isolated_morph.shape[1], 1)
+                colliding_joints[0, :] = 1.0
+                colliding_joints = colliding_joints * joint_limits[joint_idx, 0:1] + joint_limits[joint_idx, 1:2]
+                over_edge = torch.zeros_like(colliding_joints)
+                over_edge[0, :] = torch.pi / 20
+                over_edge[1, :] = - torch.pi / 20
+                colliding_joints += over_edge
+                isolated_morph = isolated_morph[0].unsqueeze(0).expand(2, -1, -1)
+                poses = forward_kinematics(isolated_morph, colliding_joints)
+                critical_distance = collision_check(isolated_morph, poses,debug=True)
+                assert (critical_distance < 0.0).all(), f"{morph_idx}, {joint_idx} {critical_distance}"
