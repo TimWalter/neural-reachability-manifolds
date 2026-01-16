@@ -92,7 +92,7 @@ def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
         Cell pose.
     """
     r3_index, so3_index = split_index(index)
-    se3 = torch.eye(4).repeat(*index.shape, 1, 1)
+    se3 = torch.eye(4, device=index.device).repeat(*index.shape, 1, 1)
     se3[..., :3, 3] = r3.cell(r3_index)
     se3[..., :3, :3] = so3.cell(so3_index)
     return se3
@@ -171,4 +171,4 @@ def random_ball(num_samples: int,
     pose = torch.eye(4).repeat(num_samples, 1, 1)
     pose[:, :3, :3] = so3.random(num_samples)
     pose[:, :3, 3] = r3.random_ball(num_samples, centre, radius)
-    return pose
+    return pose.to(centre.device)

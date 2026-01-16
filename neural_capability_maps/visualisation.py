@@ -10,6 +10,7 @@ import seaborn as sns
 from data_sampling.robotics import get_capsules, LINK_RADIUS
 import math
 
+
 @jaxtyped(typechecker=beartype)
 def get_cylinder_mesh(start: Float[Tensor, "3"], end: Float[Tensor, "3"], radius: float, resolution: int = 12):
     v = end - start
@@ -29,6 +30,7 @@ def get_cylinder_mesh(start: Float[Tensor, "3"], end: Float[Tensor, "3"], radius
             points[:, 1].view(resolution, 2),
             points[:, 2].view(resolution, 2))
 
+
 @jaxtyped(typechecker=beartype)
 def get_sphere_mesh(center: Float[Tensor, "3"], radius: float, resolution: int = 12):
     u = torch.linspace(0, 2 * torch.pi, resolution)
@@ -38,6 +40,7 @@ def get_sphere_mesh(center: Float[Tensor, "3"], radius: float, resolution: int =
     y = center[1] + radius * torch.sin(u_grid) * torch.sin(v_grid)
     z = center[2] + radius * torch.cos(v_grid)
     return x, y, z
+
 
 @jaxtyped(typechecker=beartype)
 def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
@@ -69,8 +72,8 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
             surfacecolor=torch.zeros_like(cx),
             colorscale=[[0, color], [1, color]],
             lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
-            name="Robot",      # Unified name
-            legendgroup="Robot_Group",   # Unified group
+            name="Robot",  # Unified name
+            legendgroup="Robot_Group",  # Unified group
             showlegend=current_show_legend,
             hoverinfo='skip'
         ))
@@ -79,7 +82,7 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
     latest_pos = None
     for i, j_pos in enumerate(joints):
         sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS, resolution=15)
-        joint_color = "red" # the ones we move by theta
+        joint_color = "red"  # the ones we move by theta
         moving = i % 2 == 0 and i != 0 and i != len(joints) - 1
         if latest_pos is None or moving or (latest_pos != j_pos).any():
             traces.append(go.Surface(
@@ -89,8 +92,8 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
                 colorscale=[[0, color if not moving else joint_color],
                             [1, color if not moving else joint_color]],
                 lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
-                legendgroup="Robot_Group", # Link to same group
-                showlegend=False,          # Spheres never need their own legend
+                legendgroup="Robot_Group",  # Link to same group
+                showlegend=False,  # Spheres never need their own legend
                 hoverinfo='skip'
             ))
             latest_pos = j_pos
@@ -112,15 +115,17 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     a = mdh[..., -1, 1:2]
     d = mdh[..., -1, 2:3]
 
-    if len(mdh.shape) >2:
-        idx = -1
-        mask =(a[:,0]==0)&(d[:,0]==0)
-        while torch.any(mask):
-            idx -= 1
+    idx = -1
+    mask = (a == 0) & (d == 0)
+    while torch.any(mask):
+        idx -= 1
+        if len(mdh.shape) > 2:
             a[mask] = mdh[mask, idx, 1:2]
             d[mask] = mdh[mask, idx, 2:3]
-            mask =(a==0)&(d==0)
-
+        else:
+            a = mdh[idx, 1:2]
+            d = mdh[idx, 2:3]
+        mask = (a == 0) & (d == 0)
 
     # Calculate start points
     z_ends = origins - (z_axes * 0.025 * (d / (a + d)))
@@ -144,7 +149,7 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
         line=dict(color=color, width=2),
         name=name,
         legendgroup=legend_group,
-        showlegend=show_legend # Controlled by parent function
+        showlegend=show_legend  # Controlled by parent function
     ))
 
     traces.append(go.Scatter3d(
@@ -160,13 +165,12 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     return traces
 
 
-#@jaxtyped(typechecker=beartype)
+# @jaxtyped(typechecker=beartype)
 def visualise(
         mdh: list[Float[Tensor, "dofp1 3"]] | Float[Tensor, "dofp1 3"],
-        poses: list[list[Float[Tensor, "batch 4 4"]]] |list[Float[Tensor, "batch 4 4"]] | Float[Tensor, "batch 4 4"],
-        labels: list[list[Float[Tensor, "batch 4 4"]]] |list[Bool[Tensor, "batch"]] | Bool[Tensor, "batch"],
-        names: list[list[str]]| list[str] = None):
-
+        poses: list[list[Float[Tensor, "batch 4 4"]]] | list[Float[Tensor, "batch 4 4"]] | Float[Tensor, "batch 4 4"],
+        labels: list[list[Float[Tensor, "batch 4 4"]]] | list[Bool[Tensor, "batch"]] | Bool[Tensor, "batch"],
+        names: list[list[str]] | list[str] = None):
     # --- Input Normalization ---
     if isinstance(mdh, Tensor): mdh = [mdh]
     if isinstance(poses, Tensor): poses = [poses]
@@ -248,7 +252,7 @@ def visualise(
 
     # Clean up Layout
     fig.update_layout(
-        margin=dict(l=10, r=10, b=10, t=40), # Minimize outer margins
+        margin=dict(l=10, r=10, b=10, t=40),  # Minimize outer margins
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -260,16 +264,16 @@ def visualise(
             bgcolor='rgba(255,255,255,0.8)'
         ),
         paper_bgcolor='white',
-        height=500 * rows if cols == 3 else 1000, # Dynamic height
-        width=1500,        # Fixed comfortable width
+        height=500 * rows if cols == 3 else 1000,  # Dynamic height
+        width=1500,  # Fixed comfortable width
     )
     axis_style = dict(
         showgrid=True,
-        gridcolor='lightgray', # Subtle grid lines
+        gridcolor='lightgray',  # Subtle grid lines
         gridwidth=1,
         range=[-1, 1],
         showbackground=False,  # Hides the gray walls (cleaner look)
-        zeroline=True,         # distinct line at 0
+        zeroline=True,  # distinct line at 0
         zerolinecolor='gray',
         showticklabels=True,
         title_font=dict(size=10),
@@ -288,6 +292,7 @@ def visualise(
 
     fig.show()
 
+
 @jaxtyped(typechecker=beartype)
 def visualise_predictions(mdh, poses, pred, gt):
     if isinstance(mdh, Tensor):
@@ -302,14 +307,13 @@ def visualise_predictions(mdh, poses, pred, gt):
                   names=['True Positives', 'True Negatives', 'False Positives', 'False Negatives'])
     else:
         visualise(mdh,
-                  [[p,p,p,p] for p in poses],
-                  [[p&g, (~p)&(~g), p&(~g), (~p)&g]for p,g in zip(pred, gt)],
+                  [[p, p, p, p] for p in poses],
+                  [[p & g, (~p) & (~g), p & (~g), (~p) & g] for p, g in zip(pred, gt)],
                   names=['True Positives', 'True Negatives', 'False Positives', 'False Negatives'])
 
 
 @jaxtyped(typechecker=beartype)
 def visualise_workspace(mdh, poses, labels):
-
     if isinstance(mdh, Tensor):
         visualise(mdh,
                   [poses, poses],
@@ -317,6 +321,6 @@ def visualise_workspace(mdh, poses, labels):
                   names=['Reachable', 'Unreachable'])
     else:
         visualise(mdh,
-                  [[p,p] for p in poses],
-                  [[l,~l]for l in labels],
+                  [[p, p] for p in poses],
+                  [[l, ~l] for l in labels],
                   names=['Reachable', 'Unreachable'])
