@@ -39,7 +39,7 @@ with lock:
             compressors=compressor,
             overwrite=False,
         )
-    existing = [re.findall(r'\d+', k)[-1] for k in root.array_keys() if re.findall(r'\d+', k)]
+    existing = [int(re.findall(r'\d+', k)[-1]) for k in root.array_keys() if re.findall(r'\d+', k)]
     file_name = str((max(existing) + 1) if existing else 0)
     print(f"Working in file {file_name}")
     sample_type = "int64" if args.set == "train" else "float32"
