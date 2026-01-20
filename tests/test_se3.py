@@ -1,6 +1,6 @@
 import torch
 
-import data_sampling.se3 as se3
+import neural_capability_maps.dataset.se3 as se3
 
 from scipy.spatial.transform import Rotation
 
@@ -80,3 +80,11 @@ def test_nn():
     distances = se3.distance(centre_cell.unsqueeze(1).repeat(1, 12, 1, 1), nn_cells)
 
     assert (distances.abs() < se3.MAX_DISTANCE_BETWEEN_CELLS).all()
+
+def test_vector():
+    homogeneous = se3.random(100)
+
+    vec = se3.to_vector(homogeneous)
+    homogeneous_reconstructed = se3.from_vector(vec)
+
+    assert torch.allclose(homogeneous, homogeneous_reconstructed)

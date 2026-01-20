@@ -1,0 +1,301 @@
+import torch
+
+from torch import Tensor
+from beartype import beartype
+from jaxtyping import jaxtyped, Float, Int, Float64
+from eaik.IK_Homogeneous import HomogeneousRobot
+from scipy.spatial.transform import Rotation
+
+import neural_capability_maps.dataset.se3 as se3
+from neural_capability_maps.dataset.self_collision import EPS, collision_check
+from neural_capability_maps.dataset.manipulability import geometric_jacobian, yoshikawa_manipulability
+
+
+# @jaxtyped(typechecker=beartype)
+def transformation_matrix(alpha: Float[Tensor, "*batch 1"], a: Float[Tensor, "*batch 1"], d: Float[Tensor, "*batch 1"],
+                          theta: Float[Tensor, "*batch 1"]) -> Float[Tensor, "*batch 4 4"]:
+    """
+    Computes the modified Denavit-Hartenberg transformation matrix.
+
+    Args:
+        alpha: Twist angle
+        a: Link length
+        d: Link offset
+        theta: Joint angle
+
+    Returns:
+        Transformation matrix.
+    """
+    ca, sa = torch.cos(alpha), torch.sin(alpha)
+    ct, st = torch.cos(theta), torch.sin(theta)
+    zero = torch.zeros_like(alpha)
+    one = torch.ones_like(alpha)
+    return torch.stack([torch.cat([ct, -st, zero, a], dim=-1),
+                        torch.cat([st * ca, ct * ca, -sa, -d * sa], dim=-1),
+                        torch.cat([st * sa, ct * sa, ca, d * ca], dim=-1),
+                        torch.cat([zero, zero, zero, one], dim=-1)], dim=-2)
+
+
+# @jaxtyped(typechecker=beartype)
+def forward_kinematics(mdh: Float[Tensor, "*batch dofp1 3"],
+                       theta: Float[Tensor, "*batch dofp1 1"]) -> Float[Tensor, "*batch dofp1 4 4"]:
+    """
+    Computes forward kinematics for a robot defined by modified Denavit-Hartenberg parameters.
+
+    Args:
+        mdh: Contains [alpha_i, a_i, d_i] for each joint.
+        theta: The joint angle (theta_i) for each joint.
+
+    Returns:
+        The transformation matrices from the base frame to each joint frame.
+    """
+    transforms = transformation_matrix(mdh[..., 0:1], mdh[..., 1:2], mdh[..., 2:3], theta)
+
+    poses = []
+    pose = torch.eye(4, device=mdh.device, dtype=mdh.dtype).expand(*mdh.shape[:-2], 1, 4, 4)
+    for i in range(mdh.shape[-2]):
+        poses.append(pose := pose @ transforms[..., i:i + 1, :, :])
+
+    return torch.cat(poses, dim=-3)
+
+
+# @jaxtyped(typechecker=beartype)
+def unique_with_index(x: Tensor, dim: int = 0) -> tuple[Tensor, Tensor]:
+    """
+    Compute the unique version of a tensor and return both this version and the indices of the first appearance of each
+    unique element.
+
+    Args:
+        x: Tensor to make unique
+        dim: Axes of the operation
+
+    Returns:
+        Unique tensor and respective indices.
+    """
+
+    unique, inverse, counts = torch.unique(x, dim=dim,
+                                           sorted=True, return_inverse=True, return_counts=True)
+    inv_sorted = inverse.argsort(stable=True)
+    tot_counts = torch.cat((counts.new_zeros(1), counts.cumsum(dim=0)))[:-1]
+    index = inv_sorted[tot_counts]
+    return unique, index
+
+
+# @jaxtyped(typechecker=beartype)
+def unique_indices(indices: Int[Tensor, "batch"],
+                   manipulability: Float[Tensor, "batch"],
+                   other: list[Float[Tensor, "batch *rest"]]) \
+        -> tuple[
+            Int[Tensor, "n_unique"],
+            Float[Tensor, "n_unique"],
+            list[Float[Tensor, "n_unique *rest"]]
+        ]:
+    """
+    Select unique indices, keeping the ones with the highest manipulability.
+
+    Args:
+        indices: Indices corresponding to determine uniqueness
+        manipulability: Manipulability values corresponding to indices
+        other: Other tensors to be filtered accordingly
+
+    Returns:
+        Unique indices, their manipulability, and other tensors filtered accordingly.
+    """
+    manipulability, sort_indices = torch.sort(manipulability, descending=True)
+    indices = indices[sort_indices]
+    other = [tensor[sort_indices] for tensor in other]
+
+    indices, unique_indices = unique_with_index(indices)
+
+    manipulability = manipulability[unique_indices]
+    other = [tensor[unique_indices] for tensor in other]
+
+    return indices, manipulability, other
+
+
+# @jaxtyped(typechecker=beartype)
+def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
+                       poses: Float[Tensor, "batch 4 4"]) -> tuple[
+    Float[Tensor, "batch dofp1 1"],
+    Float[Tensor, "batch"]
+]:
+    """
+    Computes inverse kinematics for a robot defined by modified Denavit-Hartenberg parameters.
+
+    Args:
+        mdh: Contains [alpha_i, a_i, d_i] for each joint.
+        poses: The desired poses (homogeneous transforms) to find joint angles for.
+
+    Returns:
+        The joint angles (theta_i) for each joint that achieve the desired poses with the highest manipulability and
+        the manipulability values.
+    """
+    try:
+        joints, manipulability = analytical_inverse_kinematics(mdh, poses)
+    except RuntimeError as e:
+        print(f"{e} \n Falling back numerical IK.")
+        joints, manipulability = numerical_inverse_kinematics(mdh, poses)
+
+    return joints, manipulability
+
+
+# @jaxtyped(typechecker=beartype)
+def morph_to_eaik(mdh: Float[Tensor, "dofp1 3"]) -> HomogeneousRobot:
+    """
+    Transform our description of a morphology (mdh parameters) into one the EAIK tool can understand for
+    analytical IK.
+
+    Args:
+        mdh: Modified DH parameters [alpha, a, d, theta]
+
+    Returns:
+        EAIK class with IK_batched method
+    """
+    local_coord = transformation_matrix(mdh[:, 0:1], mdh[:, 1:2], mdh[:, 2:3], torch.zeros_like(mdh[:, 2:3]))
+    global_coords = torch.empty_like(local_coord)
+    global_coords[0] = local_coord[0]
+    for i in range(1, len(local_coord)):
+        global_coords[i] = global_coords[i - 1] @ local_coord[i]
+    joint_transforms = torch.cat((global_coords, global_coords[-1].unsqueeze(0)), dim=0)
+    return HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
+
+
+# @jaxtyped(typechecker=beartype)
+def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> list[
+    Float[Tensor, "n_solutions dofp1 1"],
+]:
+    """
+    Computes inverse kinematics for a robot defined by modified Denavit-Hartenberg parameters analytically via EAIK and
+    returns all solutions without checking for self-collisions or whether we actually end up in the correct position.
+
+    Args:
+        mdh: Contains [alpha_i, a_i, d_i] for each joint.
+        poses: The desired poses (homogeneous transforms) to find joint angles for.
+
+    Returns:
+        The joint solutions
+    """
+    eaik_bot = morph_to_eaik(mdh)
+    if not eaik_bot.hasKnownDecomposition():
+        raise RuntimeError(f"Robot is not analytically solvable. {mdh}")
+    solutions = eaik_bot.IK_batched(poses.cpu().numpy())
+    joints = [torch.from_numpy(sol.Q.copy()).unsqueeze(-1) if sol.num_solutions() != 0
+              else torch.empty(0, mdh.shape[0], 1, dtype=torch.double)
+              for sol in solutions]
+
+    return joints
+
+
+# @jaxtyped(typechecker=beartype)
+def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> tuple[
+    Float64[Tensor, "batch dofp1 1"],
+    Float64[Tensor, "batch"]
+]:
+    """
+    Computes inverse kinematics for a robot defined by modified Denavit-Hartenberg parameters analytically via EAIK.
+
+    Args:
+        mdh: Contains [alpha_i, a_i, d_i] for each joint.
+        poses: The desired poses (homogeneous transforms) to find joint angles for.
+
+    Returns:
+        The joint angles (theta_i) for each joint that achieve the desired poses with the highest manipulability and
+        the manipulability values.
+    """
+    mdh = mdh.double().cpu()
+    poses = poses.double().cpu()
+
+    joints = pure_analytical_inverse_kinematics(mdh, poses)
+    pose_indices = torch.cat(
+        [torch.full((joint.shape[0], 1), i, dtype=torch.int64) for i, joint in enumerate(joints)], dim=0)
+    joints = torch.cat(joints, dim=0)
+    if joints.shape[0] != 0:
+        bmorph = mdh.unsqueeze(0).expand(joints.shape[0], -1, -1)
+        full_poses = forward_kinematics(bmorph, joints)
+        self_collision = collision_check(bmorph, full_poses)
+
+        pose_error = se3.distance(full_poses[:, -1, :, :], poses[pose_indices[:, 0]]).squeeze(-1)
+
+        mask = ~self_collision & (pose_error < EPS)
+        full_poses = full_poses[mask]
+        joints = joints[mask]
+        pose_indices = pose_indices[mask]
+
+        jacobian = geometric_jacobian(full_poses)
+        manipulability = yoshikawa_manipulability(jacobian)
+
+        pose_indices, manipulability, [joints] = unique_indices(pose_indices[:, 0], manipulability, [joints])
+    else:
+        pose_indices = torch.zeros((*poses.shape[:-2],), dtype=torch.bool)
+        manipulability = torch.empty(0, dtype=torch.double)
+
+    full_joints = torch.zeros((*poses.shape[:-2], mdh.shape[0], 1), dtype=torch.double)
+    full_joints[pose_indices] = joints
+
+    full_manipulability = -torch.ones((*poses.shape[:-2],), dtype=torch.double)
+    full_manipulability[pose_indices] = manipulability
+
+    return full_joints, full_manipulability
+
+
+# @jaxtyped(typechecker=beartype)
+def numerical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> tuple[
+    Float[Tensor, "batch dofp1 1"],
+    Float[Tensor, "batch"]
+]:
+    """
+    Numerical IK using damped least-squares.
+
+    Args:
+        mdh: Modified DH parameters [alpha_i, a_i, d_i].
+        poses: Target poses [batch, 4, 4].
+
+    Returns:
+        Joint angles and manipulability values.
+    """
+    bmorph = mdh.unsqueeze(0).expand(poses.shape[0], -1, -1)
+
+    joints_current = 2 * torch.pi * torch.rand(poses.shape[0], mdh.shape[0] - 1, 1, device=mdh.device) - torch.pi
+    joints_best = joints_current.clone()
+    min_errors = torch.ones(poses.shape[0], device=mdh.device) * torch.inf
+
+    for i in range(200):
+        full_joints = torch.cat([joints_current, torch.zeros(poses.shape[0], 1, 1, device=mdh.device)], dim=1)
+        reached_pose = forward_kinematics(bmorph, full_joints)
+        pose_error = se3.distance(reached_pose[:, -1, :, :], poses).squeeze(-1)
+
+        improvement = pose_error < min_errors
+        min_errors[improvement] = pose_error[improvement]
+        joints_best[improvement] = joints_current[improvement]
+
+        jacobian = geometric_jacobian(reached_pose)
+
+        rhs = torch.concat([
+            poses[..., :3, 3] - reached_pose[:, -1, :3, 3],
+            Rotation.from_matrix(poses[..., :3, :3] @ reached_pose[:, -1, :3, :3].transpose(-2, -1)).as_rotvec()
+        ], dim=-1)
+
+        try:
+            update = torch.linalg.lstsq(jacobian, rhs, rcond=1e-3)[0].clip(-torch.pi, torch.pi)
+        except torch.linalg.LinAlgError:
+            w = torch.eye(6, device=mdh.device) * (1 + 1e-6)
+            jacobian = (jacobian.transpose(-2, -1) @ w @ jacobian +
+                        1e-3 * torch.eye(jacobian.shape[-1], device=mdh.device)).inverse() @ jacobian.transpose(-2,
+                                                                                                                -1) @ w
+            update = torch.einsum('bjx,bx->bj', jacobian, rhs)
+
+        joints_current = torch.pi + joints_current + 0.2 * update.unsqueeze(2)
+        joints_current = torch.atan2(torch.sin(joints_current), torch.cos(joints_current))
+
+    joints = torch.cat([joints_best, torch.zeros(poses.shape[0], 1, 1, device=mdh.device)], dim=1)
+    reached_pose = forward_kinematics(bmorph, joints)
+    jacobian = geometric_jacobian(reached_pose)
+    manipulability = yoshikawa_manipulability(jacobian)
+
+    self_collision = collision_check(bmorph, reached_pose)
+    pose_err = se3.distance(reached_pose[:, -1, :, :], poses).squeeze(-1)
+    full_mask = (pose_err < EPS) & ~self_collision
+
+    manipulability[~full_mask] = -1
+
+    return joints, manipulability

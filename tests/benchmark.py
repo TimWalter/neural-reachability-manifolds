@@ -1,10 +1,10 @@
 import torch
 from tabulate import tabulate
 
-import data_sampling.se3 as se3
-from data_sampling.sample_morph import sample_morph
-from data_sampling.sample_capability_map import estimate_reachable_ball, estimate_capability_map
-from data_sampling.robotics import analytical_inverse_kinematics
+import neural_capability_maps.dataset.se3 as se3
+from neural_capability_maps.dataset.capability_map import estimate_reachable_ball, estimate_capability_map
+from neural_capability_maps.dataset.kinematics import analytical_inverse_kinematics
+from neural_capability_maps.dataset.morphology import sample_morph
 
 from neural_capability_maps.logger import binary_confusion_matrix
 

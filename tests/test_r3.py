@@ -1,6 +1,6 @@
 import torch
 
-import data_sampling.r3 as r3
+import neural_capability_maps.dataset.r3 as r3
 
 
 def test_distance():

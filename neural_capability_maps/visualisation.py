@@ -1,3 +1,5 @@
+import math
+
 import torch
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -7,8 +9,8 @@ from beartype import beartype
 from scipy.spatial.transform import Rotation
 import seaborn as sns
 
-from data_sampling.robotics import get_capsules, LINK_RADIUS
-import math
+from neural_capability_maps.dataset.self_collision import get_capsules, LINK_RADIUS
+from neural_capability_maps.dataset.kinematics import forward_kinematics
 
 
 @jaxtyped(typechecker=beartype)
@@ -48,6 +50,10 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
     Generates robot meshes.
     show_legend: If True, adds one entry to the legend. If False, hides all from legend.
     """
+    if poses is None:
+        joints = torch.zeros((*mdh.shape[:-1], 1), device=mdh.device, dtype=mdh.dtype)
+        poses = forward_kinematics(mdh, joints)
+
     s_all, e_all = get_capsules(mdh, poses)
     traces = []
 

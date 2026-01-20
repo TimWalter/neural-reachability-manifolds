@@ -1,9 +1,9 @@
 import torch
 
-import data_sampling.se3 as se3
-from data_sampling.sample_morph import sample_morph
-from data_sampling.sample_capability_map import get_joint_limits
-from data_sampling.robotics import pure_analytical_inverse_kinematics, analytical_inverse_kinematics, forward_kinematics, collision_check, EPS
+import neural_capability_maps.dataset.se3 as se3
+from neural_capability_maps.dataset.self_collision import collision_check, EPS
+from neural_capability_maps.dataset.kinematics import pure_analytical_inverse_kinematics, analytical_inverse_kinematics, forward_kinematics
+from neural_capability_maps.dataset.morphology import sample_morph, get_joint_limits
 
 torch.set_printoptions(sci_mode=False, precision=2)
 torch.set_default_dtype(torch.float64)
@@ -14,7 +14,6 @@ def test_pure_analytical_inverse_kinematics():
     n_robots = 10
     morphs = sample_morph(n_robots, 6, True)
     for morph_idx, morph in enumerate(morphs):
-        morph = morph.to("cuda")
         joint_limits = get_joint_limits(morph).unsqueeze(0).expand(n_samples, -1, -1)
         morph = morph.unsqueeze(0).expand(n_samples, -1, -1)
         joints = torch.rand(*joint_limits.shape[:-1], 1, device=morph.device) * joint_limits[..., 0:1] + joint_limits[
@@ -44,7 +43,6 @@ def test_analytical_inverse_kinematics():
     morphs = sample_morph(n_robots, 6, True)
 
     for i, morph in enumerate(morphs):
-        morph = morph.to("cuda")
         joint_limits = get_joint_limits(morph).unsqueeze(0).expand(n_samples, -1, -1)
         morph = morph.unsqueeze(0).expand(n_samples, -1, -1)
         joints = torch.rand(*joint_limits.shape[:-1], 1, device=morph.device) * joint_limits[..., 0:1] + joint_limits[

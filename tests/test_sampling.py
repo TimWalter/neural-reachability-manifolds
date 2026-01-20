@@ -1,7 +1,8 @@
 import torch
-from data_sampling.sample_morph import sample_morph
-from data_sampling.sample_capability_map import get_joint_limits
-from data_sampling.robotics import forward_kinematics, collision_check
+
+from neural_capability_maps.dataset.morphology import sample_morph, get_joint_limits
+from neural_capability_maps.dataset.self_collision import collision_check
+from neural_capability_maps.dataset.kinematics import forward_kinematics
 
 
 def test_scissor_collision():

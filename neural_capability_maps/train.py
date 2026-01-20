@@ -6,8 +6,8 @@ import optuna
 from tqdm import tqdm
 
 from neural_capability_maps.logger import Logger
-from neural_capability_maps.model import Model, OccupancyNetwork, Ball
-from neural_capability_maps.dataset import TrainingSet, ValidationSet
+from neural_capability_maps.model import Model
+from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
 
 
 def main(model_class: Type[Model],
@@ -85,8 +85,8 @@ if __name__ == '__main__':
     torch.manual_seed(0)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_class", type=str, default="OccupancyNetwork")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--model_class", type=str, default="Ball")
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--early_stopping", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=3e-4)

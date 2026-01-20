@@ -11,10 +11,10 @@ import plotly.graph_objects as go
 from jaxtyping import Float, Bool
 from torch import Tensor
 
-from data_sampling.representations import vector_to_homogeneous
+import neural_capability_maps.dataset.se3 as se3
 from neural_capability_maps.visualisation import get_pose_traces
 from neural_capability_maps.model import Model
-from neural_capability_maps.dataset import TrainingSet, ValidationSet
+from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
 
 
 class Logger:
@@ -112,10 +112,10 @@ class Logger:
 
         fig = go.Figure()
         colors = sns.color_palette("colorblind", n_colors=2).as_hex()
-        for t in get_pose_traces(morph[label].cpu(), vector_to_homogeneous(pose[label]).cpu(), colors[0], "Reachable",
+        for t in get_pose_traces(morph[label].cpu(), se3.from_vector(pose[label]).cpu(), colors[0], "Reachable",
                                  True):
             fig.add_trace(t)
-        for t in get_pose_traces(morph[~label].cpu(), vector_to_homogeneous(pose[~label]).cpu(), colors[1],
+        for t in get_pose_traces(morph[~label].cpu(), se3.from_vector(pose[~label]).cpu(), colors[1],
                                  "Unreachable", True):
             fig.add_trace(t)
         metrics["Poses"] = fig

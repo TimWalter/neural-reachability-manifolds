@@ -1,6 +1,6 @@
 import torch
 
-import data_sampling.so3 as so3
+import neural_capability_maps.dataset.so3 as so3
 
 from scipy.spatial.transform import Rotation
 
@@ -59,3 +59,11 @@ def test_nn():
     distances = so3.distance(centre_cell.unsqueeze(1).repeat(1, 6, 1, 1), nn_cells)
 
     assert torch.all(distances.abs() <= torch.tensor([so3.MAX_DISTANCE_BETWEEN_CELLS]))
+
+def test_vector():
+    rot_mat = so3.random(100)
+
+    cont = so3.to_vector(rot_mat)
+    rot_mat_reconstructed = so3.from_vector(cont)
+
+    assert torch.allclose(rot_mat, rot_mat_reconstructed)

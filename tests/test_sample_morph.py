@@ -1,6 +1,7 @@
 import torch
-from data_sampling.robotics import forward_kinematics, is_degenerate, morph_to_eaik
-from data_sampling.sample_morph import sample_morph
+
+from neural_capability_maps.dataset.morphology import sample_morph, _reject_morph
+from neural_capability_maps.dataset.kinematics import forward_kinematics, morph_to_eaik
 
 torch.set_default_dtype(torch.float64)
 
@@ -16,7 +17,7 @@ def test_reject_degenerate_consecutive_parallel_axes():
     morphs[row_indices, axes_choice + 1, 0] = 0.0
     morphs[row_indices, axes_choice + 2, 0] = 0.0
 
-    degenerate = is_degenerate(morphs)
+    degenerate = _reject_morph(morphs)
 
     assert degenerate.all(), f"{(~degenerate).sum()} {morphs[~degenerate][0]}"
 
@@ -31,7 +32,7 @@ def test_reject_degenerate_collinear_axes():
     morphs[row_indices, axes_choice, 1:] = torch.tensor([0, 0.1])
     morphs[row_indices, axes_choice + 1, :] = torch.tensor([0, 0, 0.1])
 
-    degenerate = is_degenerate(morphs)
+    degenerate = _reject_morph(morphs)
     assert degenerate.all(), f"{(~degenerate).sum()} {morphs[~degenerate][0]}"
 
 
