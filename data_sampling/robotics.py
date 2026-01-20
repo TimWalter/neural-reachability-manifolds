@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 import numpy as np
 from beartype import beartype
-from jaxtyping import Float, Bool, jaxtyped, Int
+from jaxtyping import Float, Bool, jaxtyped, Int, Float64
 from torch import Tensor
 from eaik.IK_Homogeneous import HomogeneousRobot
 from data_sampling.se3 import distance
@@ -71,7 +71,7 @@ def geometric_jacobian(poses: Float[Tensor, "*batch dofp1 4 4"]) -> Float[Tensor
                as the last transform.
 
     Returns:
-        Jacobian where first 3 rows are linear velocity components and last 3 rows are angular velocity components.
+        Jacobian where the first 3 rows are linear velocity components and the last 3 rows are angular velocity components.
     """
     orientation = poses[..., :-1, :3, :3]
     positions = poses[..., :-1, :3, 3]
@@ -101,6 +101,24 @@ def yoshikawa_manipulability(jacobian: Float[Tensor, "*batch 6 dof"], soft: bool
     else:
         manipulability = torch.sqrt(torch.det(torch.matmul(jacobian, jacobian.transpose(-1, -2))).abs())
     return manipulability
+
+def is_degenerate(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batch_size"]:
+    """
+    Try to determine empirically, whether a robot is degenerate (does not have the DOFs that one would expect given
+    the number of joints).
+
+    Args:
+        morph: Contains [alpha_i, a_i, d_i] for each joint.
+
+    Returns:
+        Mask indicating whether the robot is degenerate.
+    """
+    joints = 2 * torch.pi * torch.rand(morph.shape[0], 1000, morph.shape[1], 1) - torch.pi
+    morph = morph.unsqueeze(1).expand(-1, 1000, -1, -1)#.to("cuda")
+
+    poses = forward_kinematics(morph, joints)
+    jacobian = geometric_jacobian(poses)
+    return (yoshikawa_manipulability(jacobian, True) < EPS).all(dim=1)
 
 
 def unique_with_index(x, dim=0):
@@ -144,33 +162,6 @@ def unique_indices(indices: Int[Tensor, "batch"],
     return indices, manipulability, other
 
 
-# @jaxtyped(typechecker=beartype)
-def signed_distance_capsule_capsule(s1: Float[Tensor, "*batch 3"], e1: Float[Tensor, "*batch 3"], r1: float,
-                                    s2: Float[Tensor, "*batch 3"], e2: Float[Tensor, "*batch 3"], r2: float) \
-        -> Float[Tensor, "*batch"]:
-    l1 = e1 - s1
-    l2 = e2 - s2
-    ds = s1 - s2
-
-    alpha = (l1 * l1).sum(dim=-1, keepdim=True)
-    beta = (l2 * l2).sum(dim=-1, keepdim=True)
-    gamma = (l1 * l2).sum(dim=-1, keepdim=True)
-    delta = (l1 * ds).sum(dim=-1, keepdim=True)
-    epsilon = (l2 * ds).sum(dim=-1, keepdim=True)
-
-    det = alpha * beta - gamma ** 2
-
-    t1 = torch.clamp((gamma * epsilon - beta * delta) / (det + 1e-10), 0.0, 1.0)
-    t2 = torch.clamp((gamma * t1 + epsilon) / (beta + 1e-10), 0.0, 1.0)
-
-    t1 = torch.where((t2 == 0.0) | (t2 == 1.0), torch.clamp((t2 * gamma - delta) / (alpha + 1e-10), 0.0, 1.0), t1)
-
-    c1 = s1 + t1 * l1
-    c2 = s2 + t2 * l2
-
-    point_distance = ((c1 - c2) ** 2).sum(dim=-1)
-
-    return point_distance - (r1 + r2) ** 2
 
 
 # @jaxtyped(typechecker=beartype)
@@ -205,6 +196,59 @@ def get_capsules(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     s_all = torch.stack([s_a, s_d], dim=-2).flatten(-3, -2)
     e_all = torch.stack([e_a, e_d], dim=-2).flatten(-3, -2)
     return s_all, e_all
+
+# @jaxtyped(typechecker=beartype)
+def signed_distance_capsule_capsule(s1: Float[Tensor, "*batch 3"], e1: Float[Tensor, "*batch 3"], r1: float,
+                                    s2: Float[Tensor, "*batch 3"], e2: Float[Tensor, "*batch 3"], r2: float) \
+        -> Float[Tensor, "*batch"]:
+    l1 = e1 - s1
+    l2 = e2 - s2
+    ds = s1 - s2
+
+    alpha = (l1 * l1).sum(dim=-1, keepdim=True)
+    beta = (l2 * l2).sum(dim=-1, keepdim=True)
+    gamma = (l1 * l2).sum(dim=-1, keepdim=True)
+    delta = (l1 * ds).sum(dim=-1, keepdim=True)
+    epsilon = (l2 * ds).sum(dim=-1, keepdim=True)
+
+    det = alpha * beta - gamma ** 2
+
+    t1 = torch.clamp((gamma * epsilon - beta * delta) / (det + 1e-10), 0.0, 1.0)
+    t2 = torch.clamp((gamma * t1 + epsilon) / (beta + 1e-10), 0.0, 1.0)
+
+    t1 = torch.where((t2 == 0.0) | (t2 == 1.0), torch.clamp((t2 * gamma - delta) / (alpha + 1e-10), 0.0, 1.0), t1)
+
+    c1 = s1 + t1 * l1
+    c2 = s2 + t2 * l2
+
+    point_distance = ((c1 - c2) ** 2).sum(dim=-1)
+
+    return point_distance - (r1 + r2) ** 2
+
+def signed_distance_capsule_ball(s1: Float[Tensor, "*batch 3"], e1: Float[Tensor, "*batch 3"], r1: float,
+                                 s2: Float[Tensor, "*batch 3"], r2: float) \
+        -> Float[Tensor, "*batch"]:
+    """
+    Computes the squared signed distance between a capsule and a ball.
+
+    Args:
+        s1: Start point of the capsule segment.
+        e1: End point of the capsule segment.
+        r1: Radius of the capsule.
+        s2: Center of the ball.
+        r2: Radius of the ball.
+    """
+    l1 = e1 - s1
+    v = s2 - s1
+
+    dot_v_l = (v * l1).sum(dim=-1, keepdim=True)
+    len_sq_l = (l1 * l1).sum(dim=-1, keepdim=True)
+    t = torch.clamp(dot_v_l / (len_sq_l + 1e-10), 0.0, 1.0)
+    closest_point = s1 + t * l1
+
+    point_distance = ((closest_point -s2) ** 2).sum(dim=-1)
+
+    return point_distance - (r1 + r2) ** 2
 
 PAIR_COMBINATIONS = [torch.triu_indices(2 * dof, 2 * dof, offset=2) for dof in range(1, 8)]
 
@@ -247,13 +291,31 @@ def collision_check(mdh: Float[torch.Tensor, "*batch dofp1 3"],
     collisions = (torch.norm(s1 - e1, dim=-1) > EPS) & (torch.norm(s2 - e2, dim=-1) > EPS)
     # Ignore adjacent capsules
     collisions &= torch.norm(e1 - s2, dim=-1) > EPS
-    # Compute signed distances
+
+    # Compute signed distances for inner parts of the kinematic chain
     distances = signed_distance_capsule_capsule(s1, e1, radius, s2, e2, radius)
+
+    # Compute signed distances for the start and end of the kinematic chain (within 6 capsules one has to be nonzero)
+    expansion_shape = s_all.shape
+    s_end = torch.cat([s_all, s_all], dim=-2)
+    e_end = torch.cat([e_all, e_all], dim=-2)
+    c_end = torch.cat([ s_all[..., :1, :].expand(*expansion_shape), e_all[..., -1:, :].expand(*expansion_shape)], dim=-2)
+    distance_end = signed_distance_capsule_ball(s_end, e_end, radius, c_end, radius)
+    collisions_end = torch.norm(e_end - s_end, dim=-1) > EPS
+    # We are only interested in the second and second to last capsule
+    cum_sum = torch.cumsum(collisions_end, dim=-1)
+    collisions_end &= (cum_sum == 2) | (cum_sum == (cum_sum[..., -1:] - 1))
+
     if not debug:
         collisions &= distances < -EPS
-        return collisions.any(dim=-1).reshape(batch_shape)
+        collisions = collisions.any(dim=-1).reshape(batch_shape)
+        collisions_end &= distance_end < -EPS
+        collisions_end = collisions_end.any(dim=-1)
+        return collisions | collisions_end
     else:
-        return (distances*collisions).min(dim=-1).values.reshape(batch_shape)
+        critical_distance = (distances*collisions).min(dim=-1).values.reshape(batch_shape)
+        critical_distance_end = (distance_end*collisions_end).min(dim=-1).values
+        return torch.stack([critical_distance, critical_distance_end], dim=-1).min(dim=-1).values
 
 
 # @jaxtyped(typechecker=beartype)
@@ -281,6 +343,24 @@ def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
 
     return joints, manipulability
 
+def morph_to_eaik(mdh: Float[Tensor, "dofp1 3"]) -> HomogeneousRobot:
+    """
+    Transform our description of a morphology (mdh parameters) into one the EAIK tool can understand for
+    analytical IK.
+
+    Args:
+        mdh: Modified DH parameters [alpha, a, d, theta]
+
+    Returns:
+        EAIK class with IK_batched method
+    """
+    local_coord = transformation_matrix(mdh[:, 0:1], mdh[:, 1:2], mdh[:, 2:3], torch.zeros_like(mdh[:, 2:3]))
+    global_coords = torch.empty_like(local_coord)
+    global_coords[0] = local_coord[0]
+    for i in range(1, len(local_coord)):
+        global_coords[i] = global_coords[i - 1] @ local_coord[i]
+    joint_transforms = torch.cat((global_coords, global_coords[-1].unsqueeze(0)), dim=0)
+    return HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
 
 def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> list[
     Float[Tensor, "n_solutions dofp1 1"],
@@ -296,18 +376,12 @@ def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Flo
     Returns:
         The joint solutions
     """
-    local_coord = transformation_matrix(mdh[:, 0:1], mdh[:, 1:2], mdh[:, 2:3], torch.zeros_like(mdh[:, 2:3]))
-    global_coords = torch.empty_like(local_coord)
-    global_coords[0] = local_coord[0]
-    for i in range(1, len(local_coord)):
-        global_coords[i] = global_coords[i - 1] @ local_coord[i]
-    joint_transforms = torch.cat((global_coords, global_coords[-1].unsqueeze(0)), dim=0)
-    eaik_bot = HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
+    eaik_bot = morph_to_eaik(mdh)
     if not eaik_bot.hasKnownDecomposition():
         raise RuntimeError(f"Robot is not analytically solvable. {mdh}")
     solutions = eaik_bot.IK_batched(poses.cpu().numpy())
-    joints = [torch.from_numpy(sol.Q.copy()).to(mdh.device).unsqueeze(-1) if sol.num_solutions() != 0
-              else torch.empty(0, mdh.shape[0], 1, device=mdh.device, dtype=mdh.dtype)
+    joints = [torch.from_numpy(sol.Q.copy()).unsqueeze(-1) if sol.num_solutions() != 0
+              else torch.empty(0, mdh.shape[0], 1, dtype=torch.double)
               for sol in solutions]
 
     return joints
@@ -315,8 +389,8 @@ def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Flo
 
 # @jaxtyped(typechecker=beartype)
 def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> tuple[
-    Float[Tensor, "batch dofp1 1"],
-    Float[Tensor, "batch"]
+    Float64[Tensor, "batch dofp1 1"],
+    Float64[Tensor, "batch"]
 ]:
     """
     Computes inverse kinematics for a robot defined by modified Denavit-Hartenberg parameters analytically via EAIK.
@@ -329,12 +403,15 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
         The joint angles (theta_i) for each joint that achieve the desired poses with the highest manipulability and
         the manipulability values.
     """
+    mdh = mdh.double().cpu()
+    poses = poses.double().cpu()
+
     joints = pure_analytical_inverse_kinematics(mdh, poses)
     pose_indices = torch.cat(
-        [torch.full((joint.shape[0], 1), i, dtype=torch.int64) for i, joint in enumerate(joints)], dim=0).to(mdh.device)
-    joints = torch.cat(joints, dim=0).to(mdh.device)
+        [torch.full((joint.shape[0], 1), i, dtype=torch.int64) for i, joint in enumerate(joints)], dim=0)
+    joints = torch.cat(joints, dim=0)
     if joints.shape[0] != 0:
-        bmorph = mdh.unsqueeze(0).expand(joints.shape[0], -1, -1).to(mdh.device)
+        bmorph = mdh.unsqueeze(0).expand(joints.shape[0], -1, -1)
         full_poses = forward_kinematics(bmorph, joints)
         self_collision = collision_check(bmorph, full_poses)
 
@@ -350,13 +427,13 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
 
         pose_indices, manipulability, [joints] = unique_indices(pose_indices[:, 0], manipulability, [joints])
     else:
-        pose_indices = torch.zeros((*poses.shape[:-2],), device=mdh.device, dtype=torch.bool)
-        manipulability = torch.empty(0, device=mdh.device, dtype=mdh.dtype)
+        pose_indices = torch.zeros((*poses.shape[:-2],), dtype=torch.bool)
+        manipulability = torch.empty(0, dtype=torch.double)
 
-    full_joints = torch.zeros((*poses.shape[:-2], mdh.shape[0], 1), device=mdh.device, dtype=mdh.dtype)
+    full_joints = torch.zeros((*poses.shape[:-2], mdh.shape[0], 1), dtype=torch.double)
     full_joints[pose_indices] = joints
 
-    full_manipulability = -torch.ones((*poses.shape[:-2],), device=mdh.device, dtype=mdh.dtype)
+    full_manipulability = -torch.ones((*poses.shape[:-2],), dtype=torch.double)
     full_manipulability[pose_indices] = manipulability
 
     return full_joints, full_manipulability
