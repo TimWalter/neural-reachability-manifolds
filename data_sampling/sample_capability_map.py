@@ -251,5 +251,5 @@ if __name__ == "__main__":
     mean_benchmark[0][0] = int(mean_benchmark[0][0])
     mean_benchmark[0][1] = int(mean_benchmark[0][1])
     print(tabulate(mean_benchmark,
-                   headers=["Filled Cells", "Total Samples\n(Speed)", "Efficiency\n(Total)", "Efficiency\n(Unique)",
-                            "Efficiency\n(Collision)"], floatfmt=".4f", intfmt=","))
+                   headers=["Filled Cells", "Total Samples<br>(Speed)", "Efficiency<br>(Total)", "Efficiency<br>(Unique)",
+                            "Efficiency<br>(Collision)"], floatfmt=".4f", intfmt=",", tablefmt="github"))
