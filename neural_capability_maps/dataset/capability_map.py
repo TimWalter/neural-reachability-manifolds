@@ -48,7 +48,10 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor, "3"], float]:
+def estimate_reachable_ball(morph: Float[Tensor, "*batch dof 3"]) -> tuple[
+    Float[Tensor, "*batch 3"],
+    Float[Tensor, "*batch"]
+]:
     """
     Estimate the reachable ball of a robot.
 
@@ -58,10 +61,13 @@ def estimate_reachable_ball(morph: Float[Tensor, "dof 3"]) -> tuple[Float[Tensor
     Returns:
         Center and radius of the reachable ball.
     """
-    centre = transformation_matrix(morph[0, 0:1], morph[0, 1:2], morph[0, 2:3], torch.zeros_like(morph[0, 2:3]))[:3, 3]
-    radius = torch.sqrt(morph[:, 1] ** 2 + morph[:, 2] ** 2).sum() - morph[0, 2]
+    centre = transformation_matrix(morph[..., 0, 0:1],
+                                   morph[..., 0, 1:2],
+                                   morph[..., 0, 2:3],
+                                   torch.zeros_like(morph[..., 0, 2:3]))[..., :3, 3]
+    radius = torch.sqrt(morph[..., 1:, 1] ** 2 + morph[..., 1:, 2] ** 2).sum(dim=-1)
 
-    return centre.cpu(), radius.item()
+    return centre, radius
 
 
 # @jaxtyped(typechecker=beartype)
@@ -135,9 +141,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> 
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    morph = morph.to("cuda")
-
-    r_indices = estimate_capability_map(morph)
+    r_indices = estimate_capability_map(morph.to("cuda"))
 
     centre, radius = estimate_reachable_ball(morph)
     cell_indices = se3.index(se3.random_ball(num_samples, centre, radius))
@@ -160,8 +164,6 @@ def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_sample
     Returns:
         Poses and labels encoding the discretised capability map
     """
-    morph = morph.to("cuda")
-
     centre, radius = estimate_reachable_ball(morph)
     poses = se3.random_ball(num_samples, centre, radius)
 
