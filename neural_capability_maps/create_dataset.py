@@ -16,10 +16,12 @@ SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--set", type=str, default="train", help="For which set to sample (train/val/test)")
-parser.add_argument("--num_robots", type=int, default=1, help="number of robots to generate")
+parser.add_argument("--num_robots", type=int, default=10, help="number of robots to generate")
 parser.add_argument("--num_samples", type=int, default=10_000_000, help="number of samples to generate per robot")
 args = parser.parse_args()
-assert args.num_samples * args.num_robots % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
+
+assert args.num_samples % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
+assert SHARD_SIZE / args.num_samples   == SHARD_SIZE // args.num_samples, f"One robot must belong to one shard (shard size {SHARD_SIZE})"
 
 SAFE_FOLDER = Path(__file__).parent.parent / 'data' / args.set
 MORPH_FILE_NAME = "morphologies"
@@ -55,6 +57,8 @@ morph_file = root[MORPH_FILE_NAME]
 file = root[file_name]
 file_idx = 0
 
+sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
+
 torch.manual_seed(1)  # TODO remove, for now only to get the same train morphs
 for dof in range(6, 7):
     morphs = sample_morph(args.num_robots, dof, True)  # TODO True -> args.set != "train"
@@ -75,7 +79,15 @@ for dof in range(6, 7):
             morph_file.append(morph.unsqueeze(0).numpy(), axis=0)
             morph_id = morph_file.shape[0] - 1
 
-        samples = torch.cat([torch.full_like(labels, morph_id), poses, labels], dim=1)
-        samples = samples[torch.randperm(samples.shape[0])]
+        sample_buffer = torch.cat([sample_buffer, torch.cat([torch.full_like(labels, morph_id), poses, labels], dim=1)])
 
-        file[file_idx: file_idx + samples.shape[0]] = samples.cpu().numpy()
+        if sample_buffer.shape[0] == SHARD_SIZE:
+            sample_buffer = sample_buffer[torch.randperm(sample_buffer.shape[0])]
+
+            file[file_idx: file_idx + sample_buffer.shape[0]] = sample_buffer.cpu().numpy()
+
+            sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
+            file_idx += sample_buffer.shape[0]
+
+
+file[file_idx:file_idx + sample_buffer.shape[0]] = sample_buffer.cpu().numpy()
