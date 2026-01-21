@@ -12,6 +12,7 @@ from jaxtyping import Float, Bool
 from torch import Tensor
 
 import neural_capability_maps.dataset.se3 as se3
+from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
 from neural_capability_maps.visualisation import get_pose_traces
 from neural_capability_maps.model import Model
 from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
@@ -101,14 +102,11 @@ class Logger:
                               label: Bool[Tensor, "batch"]) -> dict:
         metrics = {"DOF": wandb.Histogram((morph != 0).any(dim=-1).sum(dim=-1).cpu().numpy() - 1)}
 
-        centre = torch.stack([
-            morph[:, 0, 1],
-            -morph[:, 0, 2] * torch.sin(morph[:, 0, 0]),
-            morph[:, 0, 2] * torch.cos(morph[:, 0, 0])], dim=-1)
-        metrics["Mean(Moveable Length)"] = torch.mean(1 - centre.norm(dim=1).cpu())
+        centre, radius = estimate_reachable_ball(morph)
+        metrics["Length (Excluding Base)"] = torch.mean(1 - centre.norm(dim=1).cpu())
 
-        rel_pos = pose[:, :3] - centre
-        metrics["BaseDistance(Pose)"] = wandb.Histogram(rel_pos.norm(dim=1).cpu().numpy())
+        rel_radius = (pose[:, :3] - centre).norm(dim=1) / radius
+        metrics["Relative Radius"] = wandb.Histogram(rel_radius.cpu().numpy())
 
         fig = go.Figure()
         colors = sns.color_palette("colorblind", n_colors=2).as_hex()
