@@ -22,17 +22,17 @@ reachable = []
 benchmarks = []
 for morph_idx, morph in enumerate(morphs):
     print(f"Morph_IDX: {morph_idx}")
-    morph = morph.to("cuda")
     centre, radius = estimate_reachable_ball(morph)
     cell_indices = se3.index(se3.random_ball(100_000, centre, radius))
     _, manipulability = analytical_inverse_kinematics(morph, se3.cell(cell_indices.to(morph.device)))
     ground_truth = manipulability != -1
     cell_indices = cell_indices.cpu()
 
+    morph = morph.to("cuda")
     minutes += [0]
     true_positives = 0.0
     r_indices = torch.empty(0, dtype=torch.int64)
-    while true_positives < 95.0 and minutes[-1] < 10:
+    while true_positives < 95.0 and minutes[-1] < 30:
         new_r_indices, benchmark = estimate_capability_map(morph, True)
         r_indices = torch.cat([r_indices, new_r_indices]).unique()
         benchmarks += [torch.tensor(benchmark)]
