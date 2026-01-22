@@ -59,7 +59,8 @@ class Logger:
         run = wandb.init(project="Capability Maps",
                          config=metadata,
                          group="Reachability",
-                         tags=[metadata["model_class"]])
+                         tags=[metadata["model_class"]],
+                         dir=Path(__file__).parent.parent / "wandb")
 
         if trial is not None:
             run.name = f"trial/{trial.number}/{run.name}"
@@ -110,10 +111,10 @@ class Logger:
 
         fig = go.Figure()
         colors = sns.color_palette("colorblind", n_colors=2).as_hex()
-        for t in get_pose_traces(morph[label].cpu(), se3.from_vector(pose[label]).cpu(), colors[0], "Reachable",
+        for t in get_pose_traces(morph[label][:1000].cpu(), se3.from_vector(pose[label][:1000]).cpu(), colors[0], "Reachable",
                                  True):
             fig.add_trace(t)
-        for t in get_pose_traces(morph[~label].cpu(), se3.from_vector(pose[~label]).cpu(), colors[1],
+        for t in get_pose_traces(morph[~label][:1000].cpu(), se3.from_vector(pose[~label][:1000]).cpu(), colors[1],
                                  "Unreachable", True):
             fig.add_trace(t)
         metrics["Poses"] = fig
