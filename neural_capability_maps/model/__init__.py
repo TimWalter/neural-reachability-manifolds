@@ -19,7 +19,7 @@ class Model(nn.Module):
         """
 
         model_dir = Path(__file__).parent.parent.parent / "trained_models"
-        pattern = rf"[a-z]+-[a-z]+-{model_id}"
+        pattern = rf"{model_id}-[a-z]+-[a-z]+"
         folder = next((f for f in model_dir.iterdir() if re.match(pattern, f.name)), None)
         metadata_path = model_dir / folder / 'metadata.json'
         metadata = json.load(open(metadata_path, 'r'))
@@ -30,4 +30,4 @@ class Model(nn.Module):
         return model
 
 from .occupancy_network import OccupancyNetwork
-from .ball import Ball
+from .torus import Torus

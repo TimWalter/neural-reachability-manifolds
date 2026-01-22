@@ -69,7 +69,8 @@ class Logger:
         return run
 
     def save_metadata(self, metadata: dict) -> Path:
-        folder = Path(__file__).parent.parent / "trained_models" / f"{self.run.name}"
+        parts = self.run.name.split("-")
+        folder = Path(__file__).parent.parent / "trained_models" / f"{parts[-1]}-{'-'.join(parts[:-1])}"
         Path(folder).mkdir(parents=True, exist_ok=True)
         json.dump(metadata, open(folder / 'metadata.json', 'w'), indent=4)
         return folder
