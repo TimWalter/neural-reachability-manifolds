@@ -122,8 +122,7 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     d = mdh[..., -1, 2:3]
 
     idx = -1
-    mask = (a == 0) & (d == 0)
-    while torch.any(mask):
+    while torch.any(mask := (a[..., 0] == 0) & (d[..., 0] == 0)):
         idx -= 1
         if len(mdh.shape) > 2:
             a[mask] = mdh[mask, idx, 1:2]
@@ -131,7 +130,6 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
         else:
             a = mdh[idx, 1:2]
             d = mdh[idx, 2:3]
-        mask = (a == 0) & (d == 0)
 
     # Calculate start points
     z_ends = origins - (z_axes * 0.025 * (d / (a + d)))
