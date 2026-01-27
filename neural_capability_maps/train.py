@@ -6,7 +6,7 @@ import optuna
 from tqdm import tqdm
 
 from neural_capability_maps.logger import Logger
-from neural_capability_maps.model import Model, Ball, OccupancyNetwork
+from neural_capability_maps.model import Model, Torus, OccupancyNetwork
 from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
 
 
@@ -94,4 +94,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.model_class = eval(args.model_class)
 
-    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 16}, "decoder_config": {}})
+    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 512}, "decoder_config": {}})

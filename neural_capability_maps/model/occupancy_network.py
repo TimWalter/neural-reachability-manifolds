@@ -19,7 +19,7 @@ class OccupancyNetwork(Model):
 
 
 class Encoder(nn.Module):
-    def __init__(self, dim_encoding: int = 16, num_layers: int = 1, drop_prob: float = 0.0):
+    def __init__(self, dim_encoding: int = 512, num_layers: int = 1, drop_prob: float = 0.0):
         super().__init__()
         self.lstm = nn.LSTM(3, dim_encoding, num_layers, dropout=drop_prob, batch_first=True)
 

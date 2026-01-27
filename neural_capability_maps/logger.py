@@ -93,6 +93,7 @@ class Logger:
                    'False Positives': false_positives,
                    'False Negatives': false_negatives,
                    'Accuracy': accuracy,
+                   'F1 Score': 2 * true_positives / (2 * true_positives + false_positives + false_negatives),
                    'Predictions': wandb.Histogram(np_histogram=(hist, bin_edges)),
                    }
 
