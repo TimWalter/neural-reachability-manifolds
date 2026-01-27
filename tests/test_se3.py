@@ -4,6 +4,12 @@ import neural_capability_maps.dataset.se3 as se3
 
 from scipy.spatial.transform import Rotation
 
+from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
+from neural_capability_maps.dataset.kinematics import analytical_inverse_kinematics, forward_kinematics, \
+    transformation_matrix
+from neural_capability_maps.dataset.morphology import sample_morph
+
+torch.set_default_dtype(torch.float64)
 
 def test_distance():
     x1 = torch.eye(4).repeat(3, 1, 1)
@@ -88,3 +94,18 @@ def test_vector():
     homogeneous_reconstructed = se3.from_vector(vec)
 
     assert torch.allclose(homogeneous, homogeneous_reconstructed)
+
+
+def test_random_ball_filtering():
+    morphs = sample_morph(10, 6, True)
+    for idx, morph in enumerate(morphs):
+        centre, radius = estimate_reachable_ball(morph)
+        poses = se3.random_ball(100_000, centre, radius)
+
+        joints, manipulability = analytical_inverse_kinematics(morph.double(), poses.double())
+        labels = manipulability.cpu() != -1
+
+        mat = transformation_matrix(morph[-1, 0:1], morph[-1, 1:2],morph[-1, 2:3],torch.zeros_like(morph[-1, 0:1]))
+        pred = ((poses @ torch.linalg.inv(mat))[:, :3, 3] - centre).norm(dim=-1) > estimate_reachable_ball(morph[:-1])[1]
+
+        assert not labels[pred].any(), f"Number of wrongly pruned {labels[pred].sum()}. For {idx}"

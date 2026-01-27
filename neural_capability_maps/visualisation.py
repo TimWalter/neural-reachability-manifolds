@@ -145,11 +145,14 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
     # Use the name itself as the group, so toggling "Reachable" in legend toggles it everywhere
     legend_group = f"group_{name}"
 
+    opacity = 0.2 if name == "Unreachable" else 1.0
+
     traces.append(go.Scatter3d(
         x=plot_data[:, 0],
         y=plot_data[:, 1],
         z=plot_data[:, 2],
         mode='lines',
+        opacity=opacity,
         line=dict(color=color, width=2),
         name=name,
         legendgroup=legend_group,
@@ -161,7 +164,7 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
         y=origins[:, 1],
         z=origins[:, 2],
         mode='markers',
-        marker=dict(size=1, color=color),
+        marker=dict(size=1, color=color, opacity=opacity),
         legendgroup=legend_group,
         showlegend=False,
         hoverinfo='skip'

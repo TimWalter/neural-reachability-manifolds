@@ -2,7 +2,7 @@ import torch
 from tabulate import tabulate
 
 import neural_capability_maps.dataset.se3 as se3
-from neural_capability_maps.dataset.capability_map import estimate_reachable_ball, estimate_capability_map
+from neural_capability_maps.dataset.capability_map import sample_poses_in_reach, estimate_capability_map
 from neural_capability_maps.dataset.kinematics import analytical_inverse_kinematics
 from neural_capability_maps.dataset.morphology import sample_morph
 
@@ -22,8 +22,8 @@ reachable = []
 benchmarks = []
 for morph_idx, morph in enumerate(morphs):
     print(f"Morph_IDX: {morph_idx}")
-    centre, radius = estimate_reachable_ball(morph)
-    cell_indices = se3.index(se3.random_ball(100_000, centre, radius))
+    poses = sample_poses_in_reach(100_000, morph)
+    cell_indices = se3.index(poses)
     _, manipulability = analytical_inverse_kinematics(morph, se3.cell(cell_indices.to(morph.device)))
     ground_truth = manipulability != -1
     cell_indices = cell_indices.cpu()

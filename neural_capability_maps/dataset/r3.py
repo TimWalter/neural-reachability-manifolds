@@ -121,7 +121,7 @@ def random(num_samples: int) -> Float[Tensor, "num_samples 3"]:
 # @jaxtyped(typechecker=beartype)
 def random_ball(num_samples: int,
                 centre: Float[Tensor, "3"],
-                radius: float) -> Float[Tensor, "num_samples 3"]:
+                radius: float | Float[Tensor, "1"]) -> Float[Tensor, "num_samples 3"]:
     """
     Sample random positions uniformly from a bounding ball.
 
