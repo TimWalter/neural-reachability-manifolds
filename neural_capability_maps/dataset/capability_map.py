@@ -71,7 +71,7 @@ def estimate_reachable_ball(morph: Float[Tensor, "*batch dof 3"]) -> tuple[
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False) -> \
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 1) -> \
         Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
@@ -80,6 +80,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     Args:
         morph: MDH parameters encoding the robot geometry.
         debug: Whether to return benchmark parameters.
+        minutes: Number of minutes to sample FK.
 
     Returns:
         Cell indices of reachable cells and optionally benchmark parameters.
@@ -98,12 +99,12 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     cuda_indices = []
     n_batches = 0
     start = datetime.now()
-    while datetime.now() - start < timedelta(minutes=1):
+    while datetime.now() - start < timedelta(minutes=minutes):
         _, new_indices = compiled_sample_reachable_poses(morph, joint_limits)
         cuda_indices += [new_indices]
         n_batches += 1
         if len(cuda_indices) >= 1000:
-            transfer = torch.cat(cuda_indices)
+            transfer = torch.cat(cuda_indices).unique()
             pinned = torch.empty(transfer.shape, dtype=transfer.dtype, pin_memory=True)
             pinned.copy_(transfer, non_blocking=True)
             indices += [pinned]
@@ -127,7 +128,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> tuple[
+def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int, minutes: int = 1) -> tuple[
     Int64[Tensor, " num_samples"],
     Bool[Tensor, " num_samples"]
 ]:
@@ -137,11 +138,12 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int) -> 
     Args:
         morph: MDH parameters encoding the robot geometry.
         num_samples: Number of samples to generate.
+        minutes: Number of minutes to sample FK.
 
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    r_indices = estimate_capability_map(morph.to("cuda"))
+    r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
 
     centre, radius = estimate_reachable_ball(morph)
     cell_indices = se3.index(se3.random_ball(num_samples, centre, radius))
