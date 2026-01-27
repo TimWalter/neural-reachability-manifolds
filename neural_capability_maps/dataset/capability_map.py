@@ -10,6 +10,7 @@ from beartype import beartype
 from jaxtyping import Float, jaxtyped, Bool, Int64
 from tabulate import tabulate
 
+import neural_capability_maps.dataset.r3 as r3
 import neural_capability_maps.dataset.se3 as se3
 from neural_capability_maps.autotune_batch_size import get_batch_size
 from neural_capability_maps.dataset.kinematics import transformation_matrix, forward_kinematics, \
@@ -146,7 +147,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int, min
     r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
 
     centre, radius = estimate_reachable_ball(morph)
-    cell_indices = se3.index(se3.random_ball(num_samples, centre, radius))
+    cell_indices = se3.index(se3.random_ball(num_samples, centre, max(0.0, radius - r3.MAX_DISTANCE_BETWEEN_CELLS)))
     labels = torch.isin(cell_indices, r_indices)
 
     return cell_indices, labels
@@ -167,7 +168,7 @@ def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_sample
         Poses and labels encoding the discretised capability map
     """
     centre, radius = estimate_reachable_ball(morph)
-    poses = se3.random_ball(num_samples, centre, radius)
+    poses = se3.random_ball(num_samples, centre, max(0.0, radius - r3.MAX_DISTANCE_BETWEEN_CELLS))
 
     joints, manipulability = analytical_inverse_kinematics(morph, poses)
     labels = manipulability.cpu() != -1
