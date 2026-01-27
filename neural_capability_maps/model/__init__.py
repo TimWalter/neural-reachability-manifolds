@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+
 class Model(nn.Module):
     @classmethod
     def from_id(cls, model_id: int):
@@ -28,6 +29,11 @@ class Model(nn.Module):
         model_folder = str(model_dir / folder)
         model.load_state_dict(torch.load(next(Path(model_folder).glob('*.pth'))))
         return model
+
+    @torch.inference_mode()
+    def predict(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
 
 from .occupancy_network import OccupancyNetwork
 from .torus import Torus
