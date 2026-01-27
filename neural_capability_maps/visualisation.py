@@ -18,7 +18,7 @@ def get_cylinder_mesh(start: Float[Tensor, "3"], end: Float[Tensor, "3"], radius
     v = end - start
     height = torch.norm(v)
     v_unit = v / (height + 1e-6)
-    theta = torch.linspace(0, 2 * torch.pi, resolution)
+    theta = torch.linspace(0, 2 * torch.pi, resolution, dtype=torch.float)
     z_coords = torch.tensor([0, height])
     theta_grid, z_grid = torch.meshgrid(theta, z_coords, indexing='ij')
     x_grid = radius * torch.cos(theta_grid)
