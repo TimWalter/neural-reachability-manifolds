@@ -66,7 +66,6 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
 
         cx, cy, cz = get_cylinder_mesh(s_all[i].cpu(), e_all[i].cpu(), radius=LINK_RADIUS, resolution=15)
 
-        # Determine if we show legend for this specific link
         current_show_legend = show_legend and not legend_added
         if current_show_legend:
             legend_added = True
@@ -85,24 +84,31 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
         ))
 
     joints = torch.cat([s_all, e_all[-1:]]).cpu()
+    colors = ["black", "red", color]
+    latest_color = None
     latest_pos = None
     for i, j_pos in enumerate(joints):
         sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS, resolution=15)
-        joint_color = "red"  # the ones we move by theta
-        moving = i % 2 == 0 and i != 0 and i != len(joints) - 1
-        if latest_pos is None or moving or (latest_pos != j_pos).any():
-            traces.append(go.Surface(
-                x=sx, y=sy, z=sz,
-                showscale=False,
-                surfacecolor=torch.zeros_like(sx),
-                colorscale=[[0, color if not moving else joint_color],
-                            [1, color if not moving else joint_color]],
-                lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
-                legendgroup="Robot_Group",  # Link to same group
-                showlegend=False,  # Spheres never need their own legend
-                hoverinfo='skip'
-            ))
-            latest_pos = j_pos
+        if i == 0:
+            c = 0
+        elif i % 2 == 0 and ((latest_pos != j_pos).any() or (latest_color > 1)):
+            c = 1
+        elif (latest_pos != j_pos).any():
+            c = 2
+
+        traces.append(go.Surface(
+            x=sx, y=sy, z=sz,
+            showscale=False,
+            surfacecolor=torch.zeros_like(sx),
+            colorscale=[[0, colors[c]],
+                        [1, colors[c]]],
+            lighting=dict(ambient=0.6, diffuse=0.8, specular=0.2, roughness=0.5),
+            legendgroup="Robot_Group",  # Link to same group
+            showlegend=False,  # Spheres never need their own legend
+            hoverinfo='skip'
+        ))
+        latest_color = c
+        latest_pos = j_pos
     return traces
 
 
