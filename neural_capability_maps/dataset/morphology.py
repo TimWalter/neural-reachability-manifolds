@@ -110,7 +110,7 @@ def _sample_analytically_solvable_link_types_and_twist(batch_size: int, dof: int
         link_twist[types == 2, axes_choice + 1] = 0
 
     elif dof == 6:
-        types = torch.randint(0, 1, size=(batch_size,))
+        types = torch.randint(0, 3, size=(batch_size,))
         """
         6 DOF Analytically solvable robot types:
             0 <=> (a_4=0 & a_5=0 & d_4=0 & d_5=0) | (a_1=0 & a_2=0 & d_1=0 & d_1=0) - (Spherical wrist at the beginning or end)
