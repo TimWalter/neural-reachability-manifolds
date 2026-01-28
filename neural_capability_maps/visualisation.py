@@ -91,10 +91,12 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
         sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS, resolution=15)
         if i == 0:
             c = 0
-        elif i % 2 == 0 and ((latest_pos != j_pos).any() or (latest_color > 1)):
+        elif i % 2 == 0:
             c = 1
-        elif (latest_pos != j_pos).any():
+        else:
             c = 2
+        if latest_pos is not None and torch.allclose(latest_pos, j_pos) and c > latest_color:
+            c = latest_color
 
         traces.append(go.Surface(
             x=sx, y=sy, z=sz,
@@ -107,6 +109,23 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
             showlegend=False,  # Spheres never need their own legend
             hoverinfo='skip'
         ))
+        if c == 1 and i % 2 == 0:
+            # The 3rd column of the rotation matrix is the Z-axis (rotation axis)
+            z_axis = poses[i//2 - 1, :3, 2].cpu()
+            axis_start = j_pos - (z_axis * LINK_RADIUS * 2.5)
+            axis_end = j_pos + (z_axis * LINK_RADIUS * 2.5)
+
+            traces.append(go.Scatter3d(
+                x=[axis_start[0], axis_end[0]],
+                y=[axis_start[1], axis_end[1]],
+                z=[axis_start[2], axis_end[2]],
+                mode='lines',
+                line=dict(color='red', width=4),
+                legendgroup="Robot_Group",
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
         latest_color = c
         latest_pos = j_pos
     return traces
