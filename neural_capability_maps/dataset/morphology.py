@@ -313,7 +313,7 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
 
     mask = post_capsule.norm(dim=-1) > pre_capsule.norm(dim=-1)
     arc = torch.arcsin(2 * LINK_RADIUS / post_capsule.norm(dim=-1))
-    arc[mask] = torch.arctan(2 * LINK_RADIUS / pre_capsule.norm(dim=-1))[mask]
+    arc[mask] = torch.arcsin(2 * LINK_RADIUS / pre_capsule.norm(dim=-1))[mask]
 
     joint_limits[:-1, 0] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)  # Range
     angle = torch.atan2(torch.sum(torch.cross(pre_capsule, post_capsule, dim=1) * plane_normal, dim=1),
