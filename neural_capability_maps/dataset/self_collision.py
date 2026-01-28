@@ -174,9 +174,9 @@ def collision_check(mdh: Float[Tensor, "*batch dofp1 3"],
     collisions_end &= (cum_sum == 2) | (cum_sum == (cum_sum[..., -1:] - 1))
 
     if not debug:
-        collisions &= distances < -EPS
+        collisions &= distances < 0.0
         collisions = collisions.any(dim=-1).reshape(batch_shape)
-        collisions_end &= distance_end < -EPS
+        collisions_end &= distance_end < 0.0
         collisions_end = collisions_end.any(dim=-1)
         return collisions | collisions_end
     else:
