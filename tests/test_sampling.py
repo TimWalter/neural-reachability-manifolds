@@ -34,13 +34,8 @@ def test_scissor_collision():
                         isolated_morph[0, 1] = 0
 
                 isolated_morph = isolated_morph.unsqueeze(0).expand(100, -1, -1)
-                # Account for the collision detector
-                damped_joint_limits = joint_limits[joint_idx].clone()
-                damped_joint_limits[0] -= torch.pi / 10
-                damped_joint_limits[1] += torch.pi / 20
                 non_colliding_joints = torch.rand(100, isolated_morph.shape[1], 1,
-                                                  device=morph.device) * damped_joint_limits[0:1] + damped_joint_limits[
-                                           1:2]
+                                                  device=morph.device) * joint_limits[joint_idx][0:1] + joint_limits[joint_idx][1:2]
 
                 poses = forward_kinematics(isolated_morph, non_colliding_joints)
                 critical_distance = collision_check(isolated_morph, poses, debug=True)
