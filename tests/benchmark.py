@@ -22,10 +22,11 @@ reachable = []
 benchmarks = []
 for morph_idx, morph in enumerate(morphs):
     print(f"Morph_IDX: {morph_idx}")
-    poses = sample_poses_in_reach(100_000, morph)
-    cell_indices = se3.index(poses)
+    cell_indices = se3.index(sample_poses_in_reach(100_000, morph))
     _, manipulability = analytical_inverse_kinematics(morph, se3.cell(cell_indices.to(morph.device)))
     ground_truth = manipulability != -1
+    reachable += [ground_truth.sum() / ground_truth.shape[0] * 100]
+
     cell_indices = cell_indices.cpu()
 
     morph = morph.to("cuda")
@@ -49,7 +50,7 @@ for morph_idx, morph in enumerate(morphs):
     fp += [false_positives]
     tn += [true_negatives]
     acc += [(ground_truth == labels).sum() / labels.shape[0] * 100]
-    reachable += [ground_truth.sum() / ground_truth.shape[0] * 100]
+
 
 mean_benchmark = torch.stack(benchmarks).mean(dim=0, keepdim=True).tolist()
 mean_benchmark[0][0] = int(mean_benchmark[0][0])

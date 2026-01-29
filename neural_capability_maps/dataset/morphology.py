@@ -66,7 +66,7 @@ def _reject_link_twist(link_twist: Float[Tensor, "batch_size dofp1"], link_type:
         -> Bool[Tensor, "batch_size"]:
     """
     Reject link twists that lead to degeneracy by having
-    more than two consecutive parallel axes (i.e. α_i=0, α_{i+1}=0, α_{i+2}=0),
+    more than three consecutive parallel axes (i.e. α_i=0, α_{i+1}=0, α_{i+2}=0),
     collinear axes (i.e. a Type2 joint by another Type2 Joint with α_{i+1}=0),
     or that do describe unmanufacturable spherical wrist joints.
 

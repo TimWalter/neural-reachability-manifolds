@@ -75,13 +75,17 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
 
     indices = []
     cuda_indices = []
+    total_memory = torch.cuda.mem_get_info()[0]
     n_batches = 0
+    collision_free_samples = 0
     start = datetime.now()
     while datetime.now() - start < timedelta(minutes=minutes):
         _, new_indices = compiled_sample_reachable_poses(morph, joint_limits)
         cuda_indices += [new_indices]
         n_batches += 1
-        if len(cuda_indices) >= 500:
+        collision_free_samples += new_indices.shape[0]
+
+        if torch.cuda.mem_get_info()[0] / total_memory < 0.2:
             transfer = torch.cat(cuda_indices).unique()
             pinned = torch.empty(transfer.shape, dtype=transfer.dtype, pin_memory=True)
             pinned.copy_(transfer, non_blocking=True)
@@ -91,9 +95,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     if len(cuda_indices) > 0:
         indices += [torch.cat(cuda_indices).cpu()]
 
-    indices = torch.cat(indices)
-    collision_free_samples = indices.shape[0]
-    indices = indices.unique()
+    indices = torch.cat(indices).unique()
 
     if debug:
         filled_cells = indices.shape[0]
