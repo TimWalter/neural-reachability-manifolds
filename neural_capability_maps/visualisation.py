@@ -155,7 +155,8 @@ def get_pose_traces(mdh, poses, color, name, show_legend: bool = False):
         else:
             a = mdh[idx, 1:2]
             d = mdh[idx, 2:3]
-
+    a = a.abs()
+    d = d.abs()
     # Calculate start points
     z_ends = origins - (z_axes * 0.025 * (d / (a + d)))
     x_ends = z_ends - (x_axes * 0.025 * (a / (a + d)))
