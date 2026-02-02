@@ -19,7 +19,7 @@ def distance(x1: Float[Tensor, "*batch 3"], x2: Float[Tensor, "*batch 3"]) -> Fl
     return torch.norm(x1 - x2, dim=-1, keepdim=True)
 
 
-N_DIV = 55
+N_DIV = 36
 DISTANCE_BETWEEN_CELLS = 2 / N_DIV
 N_CELLS = N_DIV ** 3
 

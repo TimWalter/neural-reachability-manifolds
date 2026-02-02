@@ -49,7 +49,7 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 1) -> \
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 2) -> \
         Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
@@ -75,7 +75,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
 
     indices = []
     cuda_indices = []
-    total_memory = torch.cuda.mem_get_info()[0]
+    cuda_memory = 0
     n_batches = 0
     collision_free_samples = 0
     start = datetime.now()
@@ -84,13 +84,16 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
         cuda_indices += [new_indices]
         n_batches += 1
         collision_free_samples += new_indices.shape[0]
-
-        if torch.cuda.mem_get_info()[0] / total_memory < 0.2:
+        cuda_memory += new_indices.numel() * new_indices.element_size()
+        if cuda_memory > 2 * 1024**3: # Flush every 2 GB
             transfer = torch.cat(cuda_indices).unique()
             pinned = torch.empty(transfer.shape, dtype=transfer.dtype, pin_memory=True)
             pinned.copy_(transfer, non_blocking=True)
             indices += [pinned]
             cuda_indices = []
+            cuda_memory = 0
+            if len(indices) >= 5:
+                indices = [torch.cat(indices).unique()]
 
     if len(cuda_indices) > 0:
         indices += [torch.cat(cuda_indices).cpu()]
@@ -142,7 +145,7 @@ def sample_poses_in_reach(num_samples: int, morph: Float[Tensor, "dof 3"]) -> Fl
         Poses that could be reached by the robot.
     """
     centre, radius = estimate_reachable_ball(morph[:-1])  # Ignore the EEF
-    radius = max(0.0, radius - r3.MAX_DISTANCE_BETWEEN_CELLS) # Robust within discretisation
+    radius = max(0.0, radius - r3.DISTANCE_BETWEEN_CELLS) # Robust within discretisation
     last_joint = se3.random_ball(num_samples, centre, radius).to(morph.device)
 
     eef_transformation = transformation_matrix(morph[-1, 0:1], morph[-1, 1:2], morph[-1, 2:3],
@@ -166,7 +169,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int, min
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
+    r_indices = estimate_capability_map(morph.to("cuda:1"), minutes=minutes)
 
     poses = sample_poses_in_reach(num_samples, morph)
     cell_indices = se3.index(poses)
