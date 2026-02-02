@@ -17,7 +17,7 @@ SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 parser = argparse.ArgumentParser()
 parser.add_argument("--set", type=str, default="train", help="For which set to sample (train/val/test)")
 parser.add_argument("--num_robots", type=int, default=1, help="number of robots to generate")
-parser.add_argument("--num_samples", type=int, default=10_000_000, help="number of samples to generate per robot")
+parser.add_argument("--num_samples", type=int, default=1_000_000, help="number of samples to generate per robot")
 args = parser.parse_args()
 
 assert args.num_samples % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
@@ -59,13 +59,12 @@ file_idx = 0
 
 sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
 
-torch.manual_seed(1)  # TODO remove, for now only to get the same train morphs
 for dof in range(6, 7):
-    morphs = sample_morph(args.num_robots, dof, True)  # TODO True -> args.set != "train"
+    morphs = sample_morph(args.num_robots, dof, args.set != "train")
 
     for morph in tqdm(morphs, desc=f"Generating {dof} DOF robots"):
         if args.set == "train":
-            cell_indices, labels = sample_capability_map(morph, args.num_samples)
+            cell_indices, labels = sample_capability_map(morph, args.num_samples, minutes=1)
 
             poses = cell_indices.unsqueeze(1)
             labels = labels.long().unsqueeze(1)

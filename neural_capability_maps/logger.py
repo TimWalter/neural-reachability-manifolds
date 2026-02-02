@@ -54,6 +54,8 @@ class Logger:
 
         self.buffer = {}
 
+        self.step = 0
+
     def setup_wandb(self, metadata: dict, trial: optuna.Trial) -> wandb.Run:
         wandb.login(key="")
         run = wandb.init(project="Capability Maps",
@@ -93,7 +95,7 @@ class Logger:
                    'False Positives': false_positives,
                    'False Negatives': false_negatives,
                    'Accuracy': accuracy,
-                   'F1 Score': 2 * true_positives / (2 * true_positives + false_positives + false_negatives),
+                   'F1 Score': 2 * true_positives / (2 * true_positives + false_positives + false_negatives) * 100,
                    'Predictions': wandb.Histogram(np_histogram=(hist, bin_edges)),
                    }
 
@@ -146,14 +148,6 @@ class Logger:
 
         if batch_idx % 1000 == 0:
             data |= self.assign_space(self.compute_input_metrics(morph, pose, label), "TrainingsInput")
-        if batch_idx % 100 == 0:
-            logit = self.model(self.fix[1], self.fix[0])
-            loss = self.loss_function(logit, self.fix[2].float())
-
-            fix_data = {"Loss": loss}
-            fix_data |= self.compute_metrics(logit, self.fix[2])
-            fix_data = self.assign_space(fix_data, "Fix")
-            data |= fix_data
 
         if batch_idx % 10 == 0:
             morph, pose, label = self.validation_set.get_semi_random_batch()
@@ -169,8 +163,8 @@ class Logger:
             intermediate_val_data = self.assign_space(intermediate_val_data, "Intermediate Validation")
             data |= intermediate_val_data
 
-        step = epoch * len(self.training_set) + batch_idx
-        self.run.log(data=data, step=step, commit=True)
+        self.step = epoch * len(self.training_set) + batch_idx
+        self.run.log(data=data, step=self.step, commit=True)
 
     @torch.no_grad()
     def log_validation(self,
@@ -209,8 +203,7 @@ class Logger:
 
             data |= self.assign_space(self.compute_input_metrics(morph, pose, label), "ValidationInput")
 
-            step = (epoch + 1) * len(self.training_set)
-            self.run.log(data=data, step=step, commit=False)
+            self.run.log(data=data, step=self.step+1, commit=False)
             self.buffer = {}
 
 

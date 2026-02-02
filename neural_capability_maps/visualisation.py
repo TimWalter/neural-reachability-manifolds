@@ -9,8 +9,9 @@ from beartype import beartype
 from scipy.spatial.transform import Rotation
 import seaborn as sns
 
+from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
 from neural_capability_maps.dataset.self_collision import get_capsules, LINK_RADIUS
-from neural_capability_maps.dataset.kinematics import forward_kinematics
+from neural_capability_maps.dataset.kinematics import forward_kinematics, transformation_matrix
 
 
 @jaxtyped(typechecker=beartype)
@@ -357,3 +358,149 @@ def visualise_workspace(mdh, poses, labels):
                   [[p, p] for p in poses],
                   [[l, ~l] for l in labels],
                   names=['Reachable', 'Unreachable'])
+
+def display_geodesic(preds, names):
+    fig = go.Figure()
+    spacing = 1.2
+    for i, (pred, name) in enumerate(zip(preds, names)):
+        fig.add_trace(go.Scatter(
+            x=torch.linspace(0, 1, pred.shape[0]),
+            y=pred.float() + i*spacing,
+            name=name,
+            line=dict(width=2.5),
+            mode='lines'
+        ))
+
+        # Optional: Add a subtle baseline for each lane to make it readable
+        fig.add_shape(
+            type="line", x0=0, y0=i*spacing, x1=1, y1=i*spacing,
+            line=dict(color="rgba(0,0,0,0.1)", width=1, dash="dot")
+        )
+
+    fig.update_layout(
+        title="Geodesic Path Reachability Analysis",
+        xaxis_title="Path Progress (t)",
+        yaxis=dict(
+            tickmode='array',
+            tickvals=[item for i in range(len(preds)) for item in (i*spacing, i*spacing + 0.5, i*spacing + 1.0)],
+            ticktext=[item for name in names for item in ('F', f'<b>{name}</b>', 'T')],
+            gridcolor='rgba(0,0,0,0.05)',
+            fixedrange=True
+        ),
+        template="plotly_white",
+        height=600,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    fig.show()
+
+def display_slice(preds, names, morph):
+    n_plots = len(preds)
+    n_rows = max(1, math.ceil(len(preds) / 2))
+    n_cols = min(2, n_plots)
+
+    steps = int(math.sqrt(preds[0].shape[0]))
+    mat = transformation_matrix(morph[0, 0:1],
+                                morph[0, 1:2],
+                                morph[0, 2:3],
+                                torch.zeros_like(morph[0, 0:1]))
+
+    torus_axis = torch.nn.functional.normalize(mat[:3, 2], dim=0)
+    centre, radius = estimate_reachable_ball(morph)
+    fixed_axes = torch.argmax(torus_axis.abs())
+    axes_mask = torch.ones(3, dtype=torch.bool)
+    axes_mask[fixed_axes] = False
+
+    axes_range = torch.linspace(-radius, radius, steps)
+
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=names,
+        horizontal_spacing=0.1,
+        vertical_spacing=0.15
+    )
+    # Determine axis labels based on your mask
+    axis_names = ['X', 'Y', 'Z']
+    x_label, y_label = [axis_names[i] for i, m in enumerate(axes_mask) if m]
+    coords = axes_range
+
+    for i, pred in enumerate(preds):
+
+        fig.add_trace(
+            go.Heatmap(
+                z=pred.reshape(steps, steps).float(),
+                x=coords,
+                y=coords,
+                colorscale='Viridis',
+                showscale=False,
+                hovertemplate=f"{x_label}: %{{x}}<br>{y_label}: %{{y}}<br>Value: %{{z}}<extra></extra>"
+            ),
+            row=(i // 2) + 1, col=(i % 2) + 1
+        )
+
+    fig.update_layout(
+        title_text=f"Reachability Slice Comparison (Fixed Axis: {axis_names[fixed_axes]})",
+        height=400 * n_rows,
+        width=400 * n_cols
+    )
+    fig.update_xaxes(title_text=x_label, showticklabels=False)
+    fig.update_yaxes(title_text=y_label, showticklabels=False)
+
+    fig.show()
+
+def display_sphere(preds, names, radius):
+    steps = int(math.sqrt(preds[0].shape[0]))
+    theta = torch.linspace(0, torch.pi, steps)
+    phi = torch.linspace(0, 2 * torch.pi, steps)
+    theta_grid, phi_grid = torch.meshgrid(theta, phi, indexing='ij')
+    x = radius * torch.sin(theta_grid) * torch.cos(phi_grid)
+    y = radius * torch.sin(theta_grid) * torch.sin(phi_grid)
+    z = radius * torch.cos(theta_grid)
+
+    n_plots = len(preds)
+    n_rows = max(1, math.ceil(len(preds) / 2))
+    n_cols = min(2, n_plots)
+    dynamic_specs = [[{'type': 'scatter3d'} for _ in range(n_cols)] for _ in range(n_rows)]
+
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=names,
+        horizontal_spacing=0.1,
+        vertical_spacing=0.15,
+        specs=dynamic_specs
+    )
+
+
+    pts = torch.stack([x, y, z], dim=-1).reshape(-1, 3).cpu().numpy()
+    for i, res in enumerate(preds):
+        row, col = (i // 2) + 1, (i % 2) + 1
+        # We filter for only 'reachable' points to make the sphere shell clear
+        mask = res.numpy().astype(bool)
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=pts[mask, 0], y=pts[mask, 1], z=pts[mask, 2],
+                mode='markers',
+                marker=dict(size=2, color=res[mask], colorscale='Viridis', opacity=0.8),
+                showlegend=False
+            ),
+            row=row, col=col
+        )
+
+    fig.update_layout(
+        title=f"3D Reachability Shell (Radius: {radius:.2f})",
+        height=400 * max(1, len(preds) // 2),
+        width=400 * min(2, len(preds))
+    )
+
+    fig.update_scenes(
+        aspectmode='cube',
+        xaxis=dict(title='X', showticklabels=False),
+        yaxis=dict(title='Y', showticklabels=False),
+        zaxis=dict(title='Z', showticklabels=False),
+        camera=dict(
+            eye=dict(x=1.5, y=1.5, z=1.5)
+        )
+    )
+    fig.show()
