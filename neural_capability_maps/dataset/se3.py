@@ -32,7 +32,7 @@ def distance(x1: Float[Tensor, "*batch 4 4"], x2: Float[Tensor, "*batch 4 4"]) -
     return torch.sqrt(r3.distance(t1, t2) ** 2 / 8 + so3.distance(r1, r2) ** 2 / (2 * torch.pi ** 2))
 
 
-MAX_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.MAX_DISTANCE_BETWEEN_CELLS ** 2 / 8 +
+MAX_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
                                        so3.MAX_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
 N_CELLS = r3.N_CELLS * so3.N_CELLS
 
@@ -92,10 +92,28 @@ def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
         Cell pose.
     """
     r3_index, so3_index = split_index(index)
-    se3 = torch.eye(4, device=index.device).repeat(*index.shape, 1, 1)
-    se3[..., :3, 3] = r3.cell(r3_index)
-    se3[..., :3, :3] = so3.cell(so3_index)
-    return se3
+    pose = torch.eye(4, device=index.device).repeat(*index.shape, 1, 1)
+    pose[..., :3, 3] = r3.cell(r3_index)
+    pose[..., :3, :3] = so3.cell(so3_index)
+    return pose
+
+
+# @jaxtyped(typechecker=beartype)
+def cell_noisy(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 4 4"]:
+    """
+    Get cell pose for the given index, with noise, such that not the centre but any pose in the cell is queried.
+
+    Args:
+        index: Cell index
+
+    Returns:
+        Cell pose
+    """
+    r3_index, so3_index = split_index(index)
+    pose = torch.eye(4, device=index.device).repeat(*index.shape, 1, 1)
+    pose[..., :3, 3] = r3.cell_noisy(r3_index)
+    pose[..., :3, :3] = so3.cell_noisy(so3_index)
+    return pose
 
 
 # @jaxtyped(typechecker=beartype)

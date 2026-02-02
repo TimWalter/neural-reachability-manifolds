@@ -28,7 +28,7 @@ def test_max_distance_between_cells():
         ]
     distances = torch.cat(distances, dim=0).squeeze(-1)
     distances = distances.sort(dim=1).values  # the smallest distance is with themselves
-    assert torch.allclose(distances[:, 1].max(), torch.tensor([r3.MAX_DISTANCE_BETWEEN_CELLS]))
+    assert torch.allclose(distances[:, 1].max(), torch.tensor([r3.DISTANCE_BETWEEN_CELLS]))
 
 
 def test_index():
@@ -71,7 +71,7 @@ def test_lookup():
 
     max_trans_distances = r3.distance(r3.cell(r3.index(translation)), translation).max()
 
-    assert max_trans_distances < r3.MAX_DISTANCE_BETWEEN_CELLS
+    assert max_trans_distances < r3.DISTANCE_BETWEEN_CELLS
 
 
 def test_nn():
@@ -83,7 +83,7 @@ def test_nn():
 
     distances = r3.distance(centre_cell.unsqueeze(1).repeat(1, 6, 1), nn_cells)
 
-    assert (torch.isclose(distances.abs(), torch.tensor([r3.MAX_DISTANCE_BETWEEN_CELLS])) | (distances == 0)).all()
+    assert (torch.isclose(distances.abs(), torch.tensor([r3.DISTANCE_BETWEEN_CELLS])) | (distances == 0)).all()
 
 
 def test_random_ball():
@@ -92,3 +92,9 @@ def test_random_ball():
     positions = r3.random_ball(100_000, centre, radius)
 
     assert r3.distance(positions, centre.unsqueeze(0).expand(positions.shape[0], 3)).max() <= radius
+
+def test_cell_noisy():
+    positions = r3.random(10000)
+    index = r3.index(positions)
+    reconstructed_index = r3.index(r3.cell_noisy(index))
+    assert (index == reconstructed_index).all()

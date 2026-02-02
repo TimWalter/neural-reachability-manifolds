@@ -109,3 +109,9 @@ def test_random_ball_filtering():
         pred = ((poses @ torch.linalg.inv(mat))[:, :3, 3] - centre).norm(dim=-1) > estimate_reachable_ball(morph[:-1])[1]
 
         assert not labels[pred].any(), f"Number of wrongly pruned {labels[pred].sum()}. For {idx}"
+
+def test_cell_noisy():
+    positions = se3.random(10000)
+    index = se3.index(positions)
+    reconstructed_index = se3.index(se3.cell_noisy(index))
+    assert (index == reconstructed_index).all()

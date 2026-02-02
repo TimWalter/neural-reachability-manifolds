@@ -79,6 +79,26 @@ def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
 
 
 # @jaxtyped(typechecker=beartype)
+def cell_noisy(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3 3"]:
+    """
+    Get cell orientation for the given index, with noise, such that not the centre but any orientation
+    in the cell is queried (underapproximating the cell with a ball).
+
+    Args:
+        index: Cell index
+
+    Returns:
+        Cell orientation
+    """
+    orientation = cell(index)
+    tangent_noise = torch.rand_like(orientation[..., :, 0]) - 0.5
+    tangent_noise /= tangent_noise.norm(dim=-1, keepdim=True)
+    # * 0.9 to respect the lookup imprecision
+    tangent_noise *= MIN_DISTANCE_BETWEEN_CELLS / 2 * torch.rand(index.shape[0], 1) * 0.65
+    return exp(orientation, tangent_noise)
+
+
+# @jaxtyped(typechecker=beartype)
 def nn(index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch 6"]:
     """
     Get nearest neighbour cell indices for the given index.
@@ -156,9 +176,12 @@ def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 
     return nn.clone().to(torch.int64)
 
 
-LEVEL = 3
+LEVEL = 4
 
 MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792, 3: 0.1654, 4: 0.1390690207}[LEVEL]
+MIN_DISTANCE_BETWEEN_CELLS = \
+{1: 0.6283174157142639, 2: 0.3141574561595917, 3: 0.1570783555507660, 4: 0.0793029814958572}[LEVEL]
+
 _CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
 N_CELLS = _CELLS.shape[0]
 
@@ -166,7 +189,7 @@ lookup_path = Path(__file__).parent / f"lookup_{LEVEL}.pt"
 if lookup_path.exists():
     _LOOKUP = torch.load(lookup_path, map_location="cpu")
 else:
-    _LOOKUP = _generate_lookup(128, _CELLS.to("cuda"))
+    _LOOKUP = _generate_lookup(256, _CELLS.to("cuda"))
     torch.save(_LOOKUP, lookup_path)
 
 nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"

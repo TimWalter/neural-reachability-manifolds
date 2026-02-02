@@ -204,7 +204,7 @@ class TrainingSet(Dataset):
        Returns:
            Pose
        """
-        return se3.to_vector(se3.cell(cell_idx[:, 0]))
+        return se3.to_vector(se3.cell_noisy(cell_idx[:, 0]))
 
 
 class ValidationSet(Dataset):

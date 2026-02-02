@@ -32,6 +32,14 @@ def test_max_distance_between_cells():
     max_distance = distances.max()
     assert torch.allclose(max_distance, torch.tensor([so3.MAX_DISTANCE_BETWEEN_CELLS]))
 
+def test_min_distance_between_cells():
+    cell_indices = torch.arange(so3.N_CELLS)
+    cells = so3.cell(cell_indices)
+    nn = so3.cell(so3.nn(cell_indices))
+    distances = so3.distance(cells.unsqueeze(1).expand(cells.shape[0], nn.shape[1], 3, 3), nn)
+    min_distance = distances.min()
+    assert torch.allclose(min_distance, torch.tensor([so3.MIN_DISTANCE_BETWEEN_CELLS]))
+
 def test_index_cell_consistency():
     test_indices = torch.tensor([0, 1, 2, 3, 4])
 
@@ -67,3 +75,9 @@ def test_vector():
     rot_mat_reconstructed = so3.from_vector(cont)
 
     assert torch.allclose(rot_mat, rot_mat_reconstructed)
+
+def test_cell_noisy():
+    positions = so3.random(10000)
+    index = so3.index(positions)
+    reconstructed_index = so3.index(so3.cell_noisy(index))
+    assert (index == reconstructed_index).all()

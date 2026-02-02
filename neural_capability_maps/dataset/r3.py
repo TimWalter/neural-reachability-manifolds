@@ -19,8 +19,8 @@ def distance(x1: Float[Tensor, "*batch 3"], x2: Float[Tensor, "*batch 3"]) -> Fl
     return torch.norm(x1 - x2, dim=-1, keepdim=True)
 
 
-N_DIV = 36
-MAX_DISTANCE_BETWEEN_CELLS = 2 / N_DIV
+N_DIV = 55
+DISTANCE_BETWEEN_CELLS = 2 / N_DIV
 N_CELLS = N_DIV ** 3
 
 
@@ -70,6 +70,24 @@ def cell(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3"]:
     indices = torch.stack([x, y, z], dim=-1)
     cell = ((indices + 0.5) / N_DIV) * 2.0 - 1.0
     return cell
+
+
+# @jaxtyped(typechecker=beartype)
+def cell_noisy(index: Int64[Tensor, "*batch"]) -> Float[Tensor, "*batch 3"]:
+    """
+    Get cell position for the given index, with noise, such that not the centre but any position in the cell is queried.
+
+    Args:
+        index: Cell index
+
+    Returns:
+        Cell position
+    """
+    position = cell(index)
+    noise = torch.rand_like(position) - 0.5
+    noise /= noise.norm(dim=-1, keepdim=True)
+    noise *= DISTANCE_BETWEEN_CELLS / 2 * torch.rand(index.shape[0], 1)
+    return position + noise
 
 
 # @jaxtyped(typechecker=beartype)
