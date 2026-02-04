@@ -37,3 +37,5 @@ class Model(nn.Module):
 
 from .occupancy_network import OccupancyNetwork
 from .torus import Torus
+from .shell import Shell
+from .mlp import MLP
