@@ -206,7 +206,7 @@ if __name__ == "__main__":
     from neural_capability_maps.dataset.morphology import sample_morph
 
     torch.manual_seed(1)
-    morphs = sample_morph(1, 6, True)
+    morphs = sample_morph(10, 6, True)
     benchmarks = []
     for morph in morphs:
         morph = morph.to("cuda")

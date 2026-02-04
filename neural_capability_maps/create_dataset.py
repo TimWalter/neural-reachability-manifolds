@@ -16,7 +16,7 @@ SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--set", type=str, default="train", help="For which set to sample (train/val/test)")
-parser.add_argument("--num_robots", type=int, default=1, help="number of robots to generate")
+parser.add_argument("--num_robots", type=int, default=10, help="number of robots to generate")
 parser.add_argument("--num_samples", type=int, default=1_000_000, help="number of samples to generate per robot")
 args = parser.parse_args()
 
@@ -88,5 +88,5 @@ for dof in range(6, 7):
 
             sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
 
-
+sample_buffer = sample_buffer[torch.randperm(sample_buffer.shape[0])]
 file[file_idx:file_idx + sample_buffer.shape[0]] = sample_buffer.cpu().numpy()
