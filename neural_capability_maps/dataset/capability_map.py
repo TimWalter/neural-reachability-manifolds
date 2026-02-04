@@ -67,6 +67,8 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     probe_size = 2048
     args = [morph.unsqueeze(0).expand(probe_size, -1, -1),
             joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+    # To exclude any one-time costs from the batch size calculation
+    sample_reachable_poses(*args)
     batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
     morph = morph.unsqueeze(0).expand(batch_size, -1, -1)
     joint_limits = joint_limits.unsqueeze(0).expand(batch_size, -1, -1)
@@ -204,7 +206,7 @@ if __name__ == "__main__":
     from neural_capability_maps.dataset.morphology import sample_morph
 
     torch.manual_seed(1)
-    morphs = sample_morph(10, 6, True)
+    morphs = sample_morph(1, 6, True)
     benchmarks = []
     for morph in morphs:
         morph = morph.to("cuda")
