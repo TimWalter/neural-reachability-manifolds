@@ -169,7 +169,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int, min
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    r_indices = estimate_capability_map(morph.to("cuda:1"), minutes=minutes)
+    r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
 
     poses = sample_poses_in_reach(num_samples, morph)
     cell_indices = se3.index(poses)
