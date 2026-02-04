@@ -6,7 +6,7 @@ import optuna
 from tqdm import tqdm
 
 from neural_capability_maps.logger import Logger
-from neural_capability_maps.model import Model, Torus, OccupancyNetwork
+from neural_capability_maps.model import Model, Torus, OccupancyNetwork, MLP, Shell
 from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
 
 
@@ -32,6 +32,7 @@ def main(model_class: Type[Model],
 
     min_loss = torch.inf
     early_stopping_counter = 0
+
     for e in range(epochs):
         model.train()
         for batch_idx, (morph, pose, label) in enumerate(tqdm(training_set, desc=f"Training")):
@@ -63,11 +64,6 @@ def main(model_class: Type[Model],
             logger.log_validation(e, batch_idx, morph, pose, label, logit, loss)
         loss /= len(validation_set) * batch_size
 
-        if trial is not None:
-            trial.report(loss, e)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-
         if loss < min_loss:
             min_loss = loss
             early_stopping_counter = 0
@@ -77,6 +73,11 @@ def main(model_class: Type[Model],
             if early_stopping_counter == early_stopping:
                 (print('Early Stopping'))
                 return min_loss
+        if trial is not None:
+            trial.report(loss, e)
+            if trial.should_prune():
+                del logger
+                raise optuna.TrialPruned()
 
     return min_loss
 
@@ -86,7 +87,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_class", type=str, default="OccupancyNetwork")
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--early_stopping", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -94,4 +95,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.model_class = eval(args.model_class)
 
-    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 512}, "decoder_config": {}})
+    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 128}, "decoder_config": {"dim_hidden":1792, "n_blocks":8}, "fourier_config": {"dim_encoding": 9, "std": 0.167}})

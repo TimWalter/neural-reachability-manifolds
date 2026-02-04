@@ -7,7 +7,7 @@ from neural_capability_maps.model import Model
 
 
 class OccupancyNetwork(Model):
-    def __init__(self, encoder_config: dict, decoder_config: dict):
+    def __init__(self, encoder_config: dict, decoder_config: dict, **kwargs):
         super().__init__()
         self.encoder = Encoder(**encoder_config)
         self.decoder = Decoder(dim_encoding=encoder_config["dim_encoding"], **decoder_config)
@@ -33,7 +33,8 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dim_hidden: int = 256, n_blocks: int = 5, dim_encoding: int = 128):
+    def __init__(self, dim_hidden: int = 384, n_blocks: int = 8,
+                 dim_encoding: int = 128,):
         super().__init__()
 
         self.pose_proj = nn.Conv1d(9, dim_hidden, 1)
