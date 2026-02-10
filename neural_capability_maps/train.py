@@ -23,11 +23,12 @@ def main(model_class: Type[Model],
     validation_set = ValidationSet(batch_size, False)
 
     model = model_class(**hyperparameter).to(device)
+    #model = torch.compile(model)
     loss_function = torch.nn.BCEWithLogitsLoss(reduction='mean')
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
-    logger = Logger(model_class, hyperparameter, epochs, batch_size, early_stopping, lr, trial, training_set,
+    logger = Logger(device, model_class, hyperparameter, epochs, batch_size, early_stopping, lr, trial, training_set,
                     validation_set, model, loss_function)
 
     min_loss = torch.inf
@@ -42,14 +43,14 @@ def main(model_class: Type[Model],
 
             model.zero_grad()
 
-            logit = model(pose, morph)
+            logit = model(morph, pose)
             loss = loss_function(logit, label.float())
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            logger.log_training(e, batch_idx, morph, pose, label, logit, loss)
+            logger.log_training(e, batch_idx, morph, pose, label, logit, loss) # TODO measure how much time this takes
 
         model.eval()
         loss = 0.0
@@ -58,9 +59,9 @@ def main(model_class: Type[Model],
             pose = pose.to(device, non_blocking=True)
             label = label.to(device, non_blocking=True)
 
-            with torch.no_grad():
-                logit = model(pose, morph)
-                loss += loss_function(logit, label.float())
+            logit = model.predict(morph, pose)
+            loss += loss_function(logit, label.float())
+
             logger.log_validation(e, batch_idx, morph, pose, label, logit, loss)
         loss /= len(validation_set) * batch_size
 
@@ -86,7 +87,7 @@ if __name__ == '__main__':
     torch.manual_seed(0)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_class", type=str, default="OccupancyNetwork")
+    parser.add_argument("--model_class", type=str, default="MLP")
     parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--early_stopping", type=int, default=-1)
@@ -95,4 +96,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.model_class = eval(args.model_class)
 
-    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 128}, "decoder_config": {"dim_hidden":1792, "n_blocks":8}, "fourier_config": {"dim_encoding": 9, "std": 0.167}})
+    main(**vars(args), hyperparameter={"encoder_config": {"dim_encoding": 128},
+                                       "decoder_config": {}})

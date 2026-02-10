@@ -112,7 +112,7 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
         ))
         if c == 1 and i % 2 == 0:
             # The 3rd column of the rotation matrix is the Z-axis (rotation axis)
-            z_axis = poses[i//2 - 1, :3, 2].cpu()
+            z_axis = poses[i // 2 - 1, :3, 2].cpu()
             axis_start = j_pos - (z_axis * LINK_RADIUS * 2.5)
             axis_end = j_pos + (z_axis * LINK_RADIUS * 2.5)
 
@@ -359,13 +359,14 @@ def visualise_workspace(mdh, poses, labels):
                   [[l, ~l] for l in labels],
                   names=['Reachable', 'Unreachable'])
 
-def display_geodesic(preds, names):
+
+def display_geodesic(preds, names, return_fig: bool = False):
     fig = go.Figure()
     spacing = 1.2
     for i, (pred, name) in enumerate(zip(preds, names)):
         fig.add_trace(go.Scatter(
             x=torch.linspace(0, 1, pred.shape[0]),
-            y=pred.float() + i*spacing,
+            y=pred.float() + i * spacing,
             name=name,
             line=dict(width=2.5),
             mode='lines'
@@ -373,7 +374,7 @@ def display_geodesic(preds, names):
 
         # Optional: Add a subtle baseline for each lane to make it readable
         fig.add_shape(
-            type="line", x0=0, y0=i*spacing, x1=1, y1=i*spacing,
+            type="line", x0=0, y0=i * spacing, x1=1, y1=i * spacing,
             line=dict(color="rgba(0,0,0,0.1)", width=1, dash="dot")
         )
 
@@ -382,7 +383,7 @@ def display_geodesic(preds, names):
         xaxis_title="Path Progress (t)",
         yaxis=dict(
             tickmode='array',
-            tickvals=[item for i in range(len(preds)) for item in (i*spacing, i*spacing + 0.5, i*spacing + 1.0)],
+            tickvals=[item for i in range(len(preds)) for item in (i * spacing, i * spacing + 0.5, i * spacing + 1.0)],
             ticktext=[item for name in names for item in ('F', f'<b>{name}</b>', 'T')],
             gridcolor='rgba(0,0,0,0.05)',
             fixedrange=True
@@ -392,10 +393,13 @@ def display_geodesic(preds, names):
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    if return_fig:
+        return fig
+    else:
+        fig.show()
 
-    fig.show()
 
-def display_slice(preds, names, morph):
+def display_slice(preds, names, morph, return_fig: bool = False):
     n_plots = len(preds)
     n_rows = max(1, math.ceil(len(preds) / 2))
     n_cols = min(2, n_plots)
@@ -426,7 +430,6 @@ def display_slice(preds, names, morph):
     coords = axes_range
 
     for i, pred in enumerate(preds):
-
         fig.add_trace(
             go.Heatmap(
                 z=pred.reshape(steps, steps).float(),
@@ -446,10 +449,13 @@ def display_slice(preds, names, morph):
     )
     fig.update_xaxes(title_text=x_label, showticklabels=False)
     fig.update_yaxes(title_text=y_label, showticklabels=False)
+    if return_fig:
+        return fig
+    else:
+        fig.show()
 
-    fig.show()
 
-def display_sphere(preds, names, radius):
+def display_sphere(preds, names, radius, return_fig: bool = False):
     steps = int(math.sqrt(preds[0].shape[0]))
     theta = torch.linspace(0, torch.pi, steps)
     phi = torch.linspace(0, 2 * torch.pi, steps)
@@ -470,7 +476,6 @@ def display_sphere(preds, names, radius):
         vertical_spacing=0.15,
         specs=dynamic_specs
     )
-
 
     pts = torch.stack([x, y, z], dim=-1).reshape(-1, 3).cpu().numpy()
     for i, res in enumerate(preds):
@@ -503,4 +508,7 @@ def display_sphere(preds, names, radius):
             eye=dict(x=1.5, y=1.5, z=1.5)
         )
     )
-    fig.show()
+    if return_fig:
+        return fig
+    else:
+        fig.show()
