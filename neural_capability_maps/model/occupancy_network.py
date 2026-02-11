@@ -10,17 +10,18 @@ class OccupancyNetwork(Model):
     def __init__(self, encoder_config: dict, decoder_config: dict, **kwargs):
         super().__init__()
         self.encoder = Encoder(**encoder_config)
-        self.decoder = Decoder(dim_encoding=encoder_config["dim_encoding"], **decoder_config)
+        self.decoder = Decoder(dim_encoding=self.encoder.dim_encoding, **decoder_config)
 
-    def forward(self, pose: Float[Tensor, "batch 9"], morph: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch"]:
+    def forward(self, morph: Float[Tensor, "batch seq 3"], pose: Float[Tensor, "batch 9"]) -> Float[Tensor, "batch"]:
         morph_enc = self.encoder(morph)
-        logit = self.decoder(pose, morph_enc)
+        logit = self.decoder(morph_enc, pose)
         return logit
 
 
 class Encoder(nn.Module):
     def __init__(self, dim_encoding: int = 512, num_layers: int = 1, drop_prob: float = 0.0):
         super().__init__()
+        self.dim_encoding = dim_encoding
         self.lstm = nn.LSTM(3, dim_encoding, num_layers, dropout=drop_prob, batch_first=True)
 
     def forward(self, morph: Float[Tensor, "batch seq 3"]) -> Float[Tensor, "batch dim_encoding"]:
@@ -33,8 +34,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dim_hidden: int = 384, n_blocks: int = 8,
-                 dim_encoding: int = 128,):
+    def __init__(self, dim_hidden: int = 384, n_blocks: int = 8, dim_encoding: int = 128):
         super().__init__()
 
         self.pose_proj = nn.Conv1d(9, dim_hidden, 1)
@@ -44,13 +44,13 @@ class Decoder(nn.Module):
         nn.init.zeros_(self.head.conv.weight)
         nn.init.zeros_(self.head.conv.bias)
 
-    def forward(self, pose: Float[Tensor, "batch 9"], morph_enc: Float[Tensor, "batch dim_encoding"]) \
+    def forward(self, morph_enc: Float[Tensor, "batch dim_encoding"], pose: Float[Tensor, "batch 9"]) \
             -> Float[Tensor, "batch"]:
         pose_enc = self.pose_proj(pose.unsqueeze(-1))
         for block in self.blocks:
-            pose_enc = block(pose_enc, morph_enc)
-        logit = self.head(pose_enc, morph_enc)
-        return logit.squeeze((1,2))
+            pose_enc = block(morph_enc, pose_enc)
+        logit = self.head(morph_enc, pose_enc)
+        return logit.squeeze((1, 2))
 
 
 class ConditionalResnetBlock(nn.Module):
@@ -61,11 +61,11 @@ class ConditionalResnetBlock(nn.Module):
         nn.init.zeros_(self.blocks[-1].conv.weight)
         nn.init.zeros_(self.blocks[-1].conv.bias)
 
-    def forward(self, pose_enc: Float[Tensor, "batch dim_io 1"], morph_enc: Float[Tensor, "batch dim_encoding"]) \
+    def forward(self, morph_enc: Float[Tensor, "batch dim_encoding"], pose_enc: Float[Tensor, "batch dim_io 1"]) \
             -> Float[Tensor, "batch dim_io 1"]:
         residual = pose_enc
         for block in self.blocks:
-            pose_enc = block(pose_enc, morph_enc)
+            pose_enc = block(morph_enc, pose_enc)
         return pose_enc + residual
 
 
@@ -76,9 +76,9 @@ class ConditionalConvBlock(nn.Module):
         self.act = nn.ReLU(inplace=True)
         self.conv = nn.Conv1d(dim_in, dim_out, 1)
 
-    def forward(self, pose_enc: Float[Tensor, "batch dim_in 1"], morph_enc: Float[Tensor, "batch dim_encoding"]) \
+    def forward(self, morph_enc: Float[Tensor, "batch dim_encoding"], pose_enc: Float[Tensor, "batch dim_in 1"]) \
             -> Float[Tensor, "batch dim_out 1"]:
-        return self.conv(self.act(self.bn(pose_enc, morph_enc)))
+        return self.conv(self.act(self.bn(morph_enc, pose_enc)))
 
 
 class ConditionalBatchNorm(nn.Module):
@@ -92,7 +92,7 @@ class ConditionalBatchNorm(nn.Module):
         nn.init.constant_(self.mlp.bias[:dim_io], 1.0)
         nn.init.constant_(self.mlp.bias[dim_io:], 0.0)
 
-    def forward(self, pose_enc: Float[Tensor, "batch dim_io 1"], morph_enc: Float[Tensor, "batch dim_encoding"]) \
+    def forward(self, morph_enc: Float[Tensor, "batch dim_encoding"], pose_enc: Float[Tensor, "batch dim_io 1"]) \
             -> Float[Tensor, "batch dim_io"]:
         proj = self.mlp(morph_enc).unsqueeze(-1)
         gamma, beta = proj.chunk(2, dim=1)
