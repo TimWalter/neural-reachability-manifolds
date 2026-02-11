@@ -92,7 +92,7 @@ def get_robot_traces(mdh, color, show_legend: bool = False, poses=None):
         sx, sy, sz = get_sphere_mesh(j_pos, radius=LINK_RADIUS, resolution=15)
         if i == 0:
             c = 0
-        elif i % 2 == 0:
+        elif i % 2 == 0 and i != len(joints) - 1:
             c = 1
         else:
             c = 2
@@ -379,7 +379,6 @@ def display_geodesic(preds, names, return_fig: bool = False):
         )
 
     fig.update_layout(
-        title="Geodesic Path Reachability Analysis",
         xaxis_title="Path Progress (t)",
         yaxis=dict(
             tickmode='array',
@@ -443,7 +442,6 @@ def display_slice(preds, names, morph, return_fig: bool = False):
         )
 
     fig.update_layout(
-        title_text=f"Reachability Slice Comparison (Fixed Axis: {axis_names[fixed_axes]})",
         height=400 * n_rows,
         width=400 * n_cols
     )
@@ -494,7 +492,6 @@ def display_sphere(preds, names, radius, return_fig: bool = False):
         )
 
     fig.update_layout(
-        title=f"3D Reachability Shell (Radius: {radius:.2f})",
         height=400 * max(1, len(preds) // 2),
         width=400 * min(2, len(preds))
     )
