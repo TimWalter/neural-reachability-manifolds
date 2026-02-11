@@ -147,14 +147,14 @@ def _sample_link_length(link_type: Int[Tensor, "batch_size dofp1"]) -> Float[Ten
     Returns:
         Link lengths (a, d)
     """
-
     dist = torch.distributions.exponential.Exponential(torch.tensor([1.0]))
     link_lengths = dist.sample(torch.Size((*link_type.shape, 1)))[..., 0].repeat(1, 1, 2)
     link_lengths /= (link_lengths * (link_type.unsqueeze(-1) != 3)).sum(dim=1, keepdim=True)
+    link_lengths *= torch.sign(torch.rand_like(link_lengths) - 0.5)
 
     gamma = torch.rand((link_type == 0).sum()) * 2 * torch.pi
-    link_lengths[..., 0][link_type == 0] *= torch.sin(gamma)
-    link_lengths[..., 1][link_type == 0] *= torch.cos(gamma)
+    link_lengths[..., 0][link_type == 0] *= torch.sin(gamma).abs()
+    link_lengths[..., 1][link_type == 0] *= torch.cos(gamma).abs()
 
     link_lengths[..., 0][(link_type == 1) | (link_type == 3)] = 0
     link_lengths[..., 1][(link_type == 2) | (link_type == 3)] = 0
@@ -173,6 +173,8 @@ def _reject_link_length(link_length: Float[Tensor, "batch_size dofp1 2"]) -> Boo
         Mask of rejected link lengths
     """
     rejected = ((link_length.abs() < 2 * LINK_RADIUS) & (link_length != 0)).any(dim=(1, 2))
+    rejected |= torch.sqrt((link_length[:, 0, :] ** 2).sum(dim=-1)) > 1 / link_length.shape[1]
+    rejected |= torch.sqrt((link_length[:, -1, :] ** 2).sum(dim=-1)) > 1 / link_length.shape[1]
     return rejected
 
 
