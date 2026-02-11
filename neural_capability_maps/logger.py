@@ -54,12 +54,28 @@ class Logger:
         self.run = self.setup_wandb(metadata, trial)
         self.folder = self.save_metadata(metadata)
 
+        # For graphics
         self.geodesic_morph, self.geodesic_poses, self.geodesic_labels = self.generate_geodesic()
         self.geodesic_filter = self._get_ood_filter_ood(self.geodesic_morph[0], self.geodesic_poses)
         self.slice_morph, self.slice_poses, self.slice_labels = self.generate_slice()
         self.slice_filter = self._get_ood_filter_ood(self.slice_morph[0], self.slice_poses)
         self.sphere_morph, self.sphere_poses, self.sphere_labels, self.sphere_radius = self.generate_sphere()
         self.sphere_filter = self._get_ood_filter_ood(self.sphere_morph[0], self.sphere_poses)
+        # For metric
+        self.boundary_morph = []
+        self.boundary_pose = []
+        self.boundary_label = []
+        self.boundary_filter = []
+        for i in range(100):
+            morph, poses, labels = self.generate_geodesic(100, True)
+            self.boundary_morph += [morph]
+            self.boundary_pose += [poses]
+            self.boundary_label += [labels]
+            self.boundary_filter += [self._get_ood_filter_ood(morph[0], poses).float()]
+        self.boundary_morph = torch.cat(self.boundary_morph, dim=0)
+        self.boundary_pose = torch.cat(self.boundary_pose, dim=0)
+        self.boundary_label = torch.cat(self.boundary_label, dim=0)
+        self.boundary_filter = torch.cat(self.boundary_filter, dim=0)
 
         self.buffer = {}
 
@@ -86,9 +102,17 @@ class Logger:
         json.dump(metadata, open(folder / 'metadata.json', 'w'), indent=4)
         return folder
 
-    def _get_one_robot(self) -> tuple[Float[Tensor, "dofp1 3"], Float[Tensor, "batch 4 4"], Bool[Tensor, "batch"]]:
-        morphs, poses, labels = self.validation_set[0]
-        morph_ids = self.validation_set._get_batch(0)[:, 0].long()
+    def _get_one_robot(self, random: bool = False) -> tuple[
+        Float[Tensor, "dofp1 3"],
+        Float[Tensor, "batch 4 4"],
+        Bool[Tensor, "batch"]]:
+        if random:
+            batch_idx = torch.randint(0, self.validation_set.num_batches, (1,)).item()
+            morphs, poses, labels = self.validation_set[batch_idx]
+            morph_ids = self.validation_set._get_batch(batch_idx)[:, 0].long()
+        else:
+            morphs, poses, labels = self.validation_set[0]
+            morph_ids = self.validation_set._get_batch(0)[:, 0].long()
 
         for i in morph_ids.unique():
             mask = i == morph_ids
@@ -96,9 +120,8 @@ class Logger:
             pose = poses[mask]
             label = labels[mask]
             if label.sum() != label.shape[0] and label.sum() != 0:
-                break
-
-        return morph, se3.from_vector(pose), label
+                return morph, se3.from_vector(pose), label
+        return self._get_one_robot(True)
 
     @staticmethod
     def _get_ood_filter_ood(morph: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) -> Bool[
@@ -112,18 +135,21 @@ class Logger:
 
         return mask
 
-    def generate_geodesic(self) -> tuple[Float[Tensor, "1000 dofp1 3"], Float[Tensor, "1000 9"], Bool[Tensor, "1000"]]:
-        geodesic_morph, pose, label = self._get_one_robot()
+    def generate_geodesic(self, num_samples:int = 1000, random: bool = False) -> tuple[
+        Float[Tensor, "num_samples dofp1 3"],
+        Float[Tensor, "num_samples 9"],
+        Bool[Tensor, "num_samples"]]:
+        geodesic_morph, pose, label = self._get_one_robot(random)
 
         start = pose[label][0]
         end = pose[~label][0]
 
         tangent = se3.log(start, end)
-        t = torch.linspace(0, 1, 1000).view(-1, 1)
-        geodesic_poses = se3.exp(start.unsqueeze(0).repeat(1000, 1, 1), t * tangent)
+        t = torch.linspace(0, 1, num_samples).view(-1, 1)
+        geodesic_poses = se3.exp(start.unsqueeze(0).repeat(num_samples, 1, 1), t * tangent)
         geodesic_labels = analytical_inverse_kinematics(geodesic_morph.double(), geodesic_poses.double())[1] != -1
 
-        return (geodesic_morph.unsqueeze(0).expand(1000, -1, -1).clone().pin_memory(),
+        return (geodesic_morph.unsqueeze(0).expand(num_samples, -1, -1).clone().pin_memory(),
                 se3.to_vector(geodesic_poses).pin_memory(), geodesic_labels)
 
     def generate_slice(self) -> tuple[Float[Tensor, "10000 dofp1 3"], Float[Tensor, "10000 9"], Bool[Tensor, "10000"]]:
@@ -196,14 +222,16 @@ class Logger:
                    'False Positives': false_positives,
                    'False Negatives': false_negatives,
                    'Accuracy': accuracy,
-                   'F1 Score': 2 * true_positives / (2 * true_positives + false_positives + false_negatives) * 100,
+                   'F1 Score': 2 * true_positives / (2 * true_positives + false_positives + false_negatives) * 100 if true_positives + false_positives + false_negatives != 0 else 100,
                    'Predictions': wandb.Histogram(np_histogram=(hist, bin_edges)),
                    }
 
         return metrics
 
     def compute_boundary_metrics(self) -> dict:
-        metrics = {}
+        boundary_logits = self.model.predict(self.boundary_morph.to(self.device, non_blocking=True),
+                                          self.boundary_pose.to(self.device, non_blocking=True)).cpu()
+        metrics = self.compute_metrics(boundary_logits * self.boundary_filter, self.boundary_label)
 
         geodesic_logits = self.model.predict(self.geodesic_morph.to(self.device, non_blocking=True),
                                              self.geodesic_poses.to(self.device, non_blocking=True)).cpu()
