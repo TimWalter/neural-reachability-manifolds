@@ -112,7 +112,7 @@ class Dataset:
         Returns:
             Morphology.
         """
-
+        # TODO once we switch to various DOFs
         morph = self.morphologies[morph_id]
         dof = (morph[0].abs().sum(dim=1) != 0).sum().item()
         morph = morph[:, :dof, :]

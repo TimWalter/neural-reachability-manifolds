@@ -45,12 +45,12 @@ def main(model_class: Type[Model],
 
             logit = model(morph, pose)
             loss = loss_function(logit, label.float())
-            loss.backward()
 
+            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            logger.log_training(e, batch_idx, morph, pose, label, logit, loss) # TODO measure how much time this takes
+            logger.log_training(e, batch_idx, morph, pose, label, logit, loss)
 
         model.eval()
         loss = 0.0
@@ -88,7 +88,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_class", type=str, default="MLP")
-    parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--early_stopping", type=int, default=-1)
     parser.add_argument("--lr", type=float, default=3e-4)
