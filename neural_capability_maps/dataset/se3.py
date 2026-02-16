@@ -31,7 +31,8 @@ def distance(x1: Float[Tensor, "*batch 4 4"], x2: Float[Tensor, "*batch 4 4"]) -
     r2 = x2[..., :3, :3]
     return torch.sqrt(r3.distance(t1, t2) ** 2 / 8 + so3.distance(r1, r2) ** 2 / (2 * torch.pi ** 2))
 
-
+MIN_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
+                                       so3.MIN_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
 MAX_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
                                        so3.MAX_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
 N_CELLS = r3.N_CELLS * so3.N_CELLS
