@@ -19,7 +19,8 @@ from neural_capability_maps.dataset.kinematics import analytical_inverse_kinemat
 from neural_capability_maps.dataset.capability_map import sample_poses_in_reach, estimate_capability_map
 from neural_capability_maps.logger import binary_confusion_matrix
 
-print(f"R3 Cells: {r3.N_CELLS} at {r3.DISTANCE_BETWEEN_CELLS}")
+print(f"R3 Cells: {r3.N_CELLS}, actually {(torch.linalg.norm(r3.cell(torch.arange(0, r3.N_CELLS)), dim=1) < 1.0).sum()
+}, at {r3.DISTANCE_BETWEEN_CELLS}")
 print(f"SO3 Cells: {so3.N_CELLS} at {so3.MIN_DISTANCE_BETWEEN_CELLS} - {so3.MAX_DISTANCE_BETWEEN_CELLS}")
 print(f"SE3 Cells: {se3.N_CELLS} at {se3.MIN_DISTANCE_BETWEEN_CELLS} - {se3.MAX_DISTANCE_BETWEEN_CELLS}")
 
