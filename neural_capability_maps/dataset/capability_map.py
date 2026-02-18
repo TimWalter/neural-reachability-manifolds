@@ -14,7 +14,7 @@ import neural_capability_maps.dataset.r3 as r3
 import neural_capability_maps.dataset.se3 as se3
 from neural_capability_maps.autotune_batch_size import get_batch_size
 from neural_capability_maps.dataset.kinematics import transformation_matrix, forward_kinematics, \
-    analytical_inverse_kinematics
+    inverse_kinematics
 from neural_capability_maps.dataset.self_collision import collision_check
 from neural_capability_maps.dataset.morphology import get_joint_limits
 
@@ -49,7 +49,7 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 2) -> \
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 1) -> \
         Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
@@ -87,7 +87,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
         n_batches += 1
         collision_free_samples += new_indices.shape[0]
         cuda_memory += new_indices.numel() * new_indices.element_size()
-        if cuda_memory > 2 * 1024**3: # Flush every 2 GB
+        if cuda_memory > 2 * 1024 ** 3:  # Flush every 2 GB
             transfer = torch.cat(cuda_indices).unique()
             pinned = torch.empty(transfer.shape, dtype=transfer.dtype, pin_memory=True)
             pinned.copy_(transfer, non_blocking=True)
@@ -147,7 +147,7 @@ def sample_poses_in_reach(num_samples: int, morph: Float[Tensor, "dof 3"]) -> Fl
         Poses that could be reached by the robot.
     """
     centre, radius = estimate_reachable_ball(morph[:-1])  # Ignore the EEF
-    radius = max(0.0, radius - r3.DISTANCE_BETWEEN_CELLS) # Robust within discretisation
+    radius = max(0.0, radius - r3.DISTANCE_BETWEEN_CELLS)  # Robust within discretisation
     last_joint = se3.random_ball(num_samples, centre, radius).to(morph.device)
 
     eef_transformation = transformation_matrix(morph[-1, 0:1], morph[-1, 1:2], morph[-1, 2:3],
@@ -156,50 +156,37 @@ def sample_poses_in_reach(num_samples: int, morph: Float[Tensor, "dof 3"]) -> Fl
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_capability_map(morph: Float[Tensor, "dofp1 3"], num_samples: int, minutes: int = 1) -> tuple[
-    Int64[Tensor, " num_samples"],
-    Bool[Tensor, " num_samples"]
-]:
+def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
+                          num_samples: int,
+                          return_poses: bool = False,
+                          use_ik: bool = False,
+                          minutes: int = 1) -> \
+        tuple[Int64[Tensor, " num_samples"], Bool[Tensor, " num_samples"]] | \
+        tuple[Float[Tensor, " {num_samples} 4 4"], Bool[Tensor, " {num_samples}"]]:
     """
     Estimate the workspace of a robot solely from forward kinematics.
 
     Args:
         morph: MDH parameters encoding the robot geometry.
+        return_poses: Whether to return poses or only the cell index.
+        use_ik: Whether to use inverse kinematics or only forward kinematics.
         num_samples: Number of samples to generate.
         minutes: Number of minutes to sample FK.
 
     Returns:
         Labels and indices encoding the discretised capability map
     """
-    r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
-
     poses = sample_poses_in_reach(num_samples, morph)
     cell_indices = se3.index(poses)
-    labels = torch.isin(cell_indices, r_indices)
 
-    return cell_indices, labels
+    if not use_ik:
+        r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
+        labels = torch.isin(cell_indices, r_indices)
+    else:
+        joints, manipulability = inverse_kinematics(morph.to("cuda"), poses.to("cuda"))
+        labels = manipulability.cpu() != -1
 
-
-@jaxtyped(typechecker=beartype)
-def sample_capability_map_analytically(morph: Float[Tensor, "dof 3"], num_samples: int) -> tuple[
-    Float[Tensor, " {num_samples} 4 4"],
-    Bool[Tensor, " {num_samples}"]
-]:
-    """
-    Estimate the workspace of a robot with analytically solvable inverse kinematics.
-
-    Args:
-        morph: MDH parameters encoding the robot geometry
-        num_samples: Number of samples to generate
-    Returns:
-        Poses and labels encoding the discretised capability map
-    """
-    poses = sample_poses_in_reach(num_samples, morph)
-
-    joints, manipulability = analytical_inverse_kinematics(morph, poses)
-    labels = manipulability.cpu() != -1
-
-    return poses.cpu(), labels
+    return cell_indices if not return_poses else poses, labels
 
 
 if __name__ == "__main__":

@@ -9,19 +9,19 @@ from tqdm import tqdm
 
 import neural_capability_maps.dataset.se3 as se3
 from neural_capability_maps.dataset.morphology import sample_morph
-from neural_capability_maps.dataset.capability_map import sample_capability_map_analytically, sample_capability_map
+from neural_capability_maps.dataset.capability_map import sample_capability_map
 
 CHUNK_SIZE = 100_000  # train: ~2.4MB, val:  ~4.4MB
 SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--set", type=str, default="train", help="For which set to sample (train/val/test)")
-parser.add_argument("--num_robots", type=int, default=10, help="number of robots to generate")
-parser.add_argument("--num_samples", type=int, default=1_000_000, help="number of samples to generate per robot")
+parser.add_argument("--set", type=str, default="train", choices=["train", "val", "test"], help="For which set to sample")
+parser.add_argument("--num_robots", type=int, default=10_000, help="number of robots to generate")
+parser.add_argument("--num_samples", type=int, default=10_000, help="number of samples to generate per robot")
 args = parser.parse_args()
 
-assert args.num_samples % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
-assert SHARD_SIZE / args.num_samples   == SHARD_SIZE // args.num_samples, f"One robot must belong to one shard (shard size {SHARD_SIZE})"
+assert args.num_samples * args.num_robots % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
+assert SHARD_SIZE / args.num_samples == SHARD_SIZE // args.num_samples, f"One robot must belong to one shard (shard size {SHARD_SIZE})"
 
 SAFE_FOLDER = Path(__file__).parent.parent / 'data' / args.set
 MORPH_FILE_NAME = "morphologies"
@@ -64,12 +64,12 @@ for dof in range(6, 7):
 
     for morph in tqdm(morphs, desc=f"Generating {dof} DOF robots"):
         if args.set == "train":
-            cell_indices, labels = sample_capability_map(morph, args.num_samples, minutes=1)
+            cell_indices, labels = sample_capability_map(morph, args.num_samples, minutes=1, use_ik=True)
 
             poses = cell_indices.unsqueeze(1)
             labels = labels.long().unsqueeze(1)
         else:
-            poses, labels = sample_capability_map_analytically(morph, args.num_samples)
+            poses, labels = sample_capability_map(morph, args.num_samples, return_poses=True, use_ik=True)
             poses = se3.to_vector(poses)
             labels = labels.float().unsqueeze(1)
 
