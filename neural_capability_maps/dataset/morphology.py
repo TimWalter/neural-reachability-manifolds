@@ -12,9 +12,9 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
     """
     Sample link types:
         0 <=> a≠0, d≠0 (General)
-        1 <=> a=0, d≠0 (Only link length)
-        2 <=> a≠0, d=0 (Only link offset)
-        3 <=> a=0, d=0 (Spherical wrist component) - Half as likely since it also affects the former joint (for joint limits)
+        1 <=> a=0, d≠0 (Only link offset)
+        2 <=> a≠0, d=0 (Only link length)
+        3 <=> a=0, d=0 (Spherical wrist component)
     Args:
         batch_size: number of robots to sample
         dof: degrees of freedom of the robots
@@ -22,9 +22,7 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
     Returns:
         Link type sampled uniformly
     """
-    link_type = torch.randint(0, 7, size=(batch_size, dof + 1)) // 2
-    link_type[:, :-1][link_type[:, 1:] == 3] = 1 + 2 * torch.randint(0, 1, size=link_type[:, :-1][
-        link_type[:, 1:] == 3].shape)
+    link_type = torch.randint(0, 4, size=(batch_size, dof + 1))
 
     return link_type
 
@@ -40,7 +38,7 @@ def _reject_link_type(link_type: Int[Tensor, "batch_size dofp1"]) -> Bool[Tensor
     Returns:
         Mask of rejected link types
     """
-    rejected = ((link_type[:, 2:] == 3) & (link_type[:, 1:-1] == 3) & (link_type[:, :-2] == 3)).any(dim=1)
+    rejected = ((link_type[:, 1:] == 3) & (link_type[:, :-1] == 3)).any(dim=1)
     return rejected
 
 
@@ -67,7 +65,7 @@ def _reject_link_twist(link_twist: Float[Tensor, "batch_size dofp1"], link_type:
     """
     Reject link twists that lead to degeneracy by having
     more than three consecutive parallel axes (i.e. α_i=0, α_{i+1}=0, α_{i+2}=0),
-    collinear axes (i.e. a Type2 joint by another Type2 Joint with α_{i+1}=0),
+    collinear axes (i.e. a Type1 joint by another Type1 Joint with α_{i+1}=0),
     or that do describe unmanufacturable spherical wrist joints.
 
     Args:
@@ -80,7 +78,7 @@ def _reject_link_twist(link_twist: Float[Tensor, "batch_size dofp1"], link_type:
     rejected = ((link_twist[:, :-2] == 0) & (link_twist[:, 1:-1] == 0) & (link_twist[:, 2:] == 0)).any(dim=1)
     rejected |= ((link_twist[:, :-2] == 0) & (link_type[:, 1:-1] == 3) & (link_twist[:, 2:] == 0)).any(dim=1)
 
-    rejected |= ((link_type[:, :-1] == 2) & (link_type[:, 1:] == 2) & (link_twist[:, 1:] == 0)).any(dim=1)
+    rejected |= ((link_type[:, :-1] == 1) & (link_type[:, 1:] == 1) & (link_twist[:, 1:] == 0)).any(dim=1)
 
     rejected |= ((link_type == 3) & (link_twist == 0)).any(dim=1)
     return rejected
@@ -95,17 +93,17 @@ def _sample_analytically_solvable_link_types_and_twist(batch_size: int, dof: int
         types = torch.randint(0, 3, size=(batch_size,))
         """
         5 DOF Analytically solvable robot types:
-            0 <=> (a_0=0) | (a_4=0)                 - (The last or first two axes intersect)
-            1 <=> (a_2=0 & α_4=0) | (a_4=0 & α_2=0) - (One pair of consecutive, intermediate axes intersects while the other is parallel)
-            2 <=> α_i=0 & α_{i+1}=0                 - (Any three consecutive axes are parallel)
+            0 <=> (a_1=0) | (a_4=0)                 - The last or first two axes intersect
+            1 <=> (a_2=0 & α_4=0) | (a_3=0 & α_3=0) - One pair of consecutive, intermediate axes intersects while the other is parallel
+            2 <=> α_i=0 & α_{i+1}=0, i\in[1, 3]                 - Any three consecutive axes are parallel
         """
-        link_type[types == 0, torch.randint(0, 2, ((types == 0).sum().item(),)) * 4] = 1
+        link_type[types == 0, torch.randint(0, 2, ((types == 0).sum().item(),)) * 3 + 1] = 1
 
         axes_choice = torch.randint(0, 2, ((types == 1).sum().item(),))
         link_type[types == 1, axes_choice * 2 + 2] = 1
         link_twist[types == 1, (~axes_choice.bool()) * 2 + 2] = 0
 
-        axes_choice = torch.randint(0, 4, ((types == 2).sum().item(),))
+        axes_choice = torch.randint(1, 4, ((types == 2).sum().item(),))
         link_twist[types == 2, axes_choice] = 0
         link_twist[types == 2, axes_choice + 1] = 0
 
@@ -113,13 +111,13 @@ def _sample_analytically_solvable_link_types_and_twist(batch_size: int, dof: int
         types = torch.randint(0, 3, size=(batch_size,))
         """
         6 DOF Analytically solvable robot types:
-            0 <=> (a_4=0 & a_5=0 & d_4=0 & d_5=0) | (a_1=0 & a_2=0 & d_1=0 & d_1=0) - (Spherical wrist at the beginning or end)
-            1 <=> (α_1=0 & α_2=0 & a_5=0) | (α_4=0 & α_5=0 & a_1=0)                 - (3 Parallel & 2 intersecting axes on opposing ends)
-            2 <=> (α_2=0 & α_3=0) | (α_3=0 & α_4=0)                                 - (3 Parallel inner axes)
+            0 <=> (a_4=0 & a_5=0 & d_4=0) | (a_1=0 & a_2=0 & d_1=0) - Spherical wrist (3 intersecting axes) at the beginning or end
+            1 <=> (α_1=0 & α_2=0 & a_5=0) | (α_4=0 & α_5=0 & a_1=0)                 - 3 Parallel & 2 intersecting axes on opposing ends
+            2 <=> (α_2=0 & α_3=0) | (α_3=0 & α_4=0)                                 - 3 Parallel inner axes
         """
         axes_choice = torch.randint(0, 2, ((types == 0).sum().item(),))
         link_type[types == 0, 1 + 3 * axes_choice] = 3
-        link_type[types == 0, 2 + 3 * axes_choice] = 3
+        link_type[types == 0, 2 + 3 * axes_choice] = 1
 
         axes_choice = torch.randint(0, 2, ((types == 1).sum().item(),))
         link_type[types == 1, 1 + 4 * axes_choice] = 1
@@ -191,13 +189,14 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
     Returns:
         MDH parameters (alpha, a, d) describing the robot morphology
     """
+    oversampling = 2 * batch_size
     if analytically_solvable:
-        link_types, link_twists = _sample_analytically_solvable_link_types_and_twist(batch_size, dof)
+        link_types, link_twists = _sample_analytically_solvable_link_types_and_twist(oversampling, dof)
         while (mask := _reject_link_type(link_types) | _reject_link_twist(link_twists, link_types)).any():
             link_types[mask], link_twists[mask] = _sample_analytically_solvable_link_types_and_twist(mask.sum().item(),
                                                                                                      dof)
     else:
-        link_types = _sample_link_type(batch_size, dof)
+        link_types = _sample_link_type(oversampling, dof)
         while (mask := _reject_link_type(link_types)).any():
             link_types[mask] = _sample_link_type(mask.sum().item(), dof)
 
@@ -206,8 +205,10 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
             link_twists[mask] = _sample_link_twist(link_types[mask])
 
     link_lengths = _sample_link_length(link_types)
-    while (mask := _reject_link_length(link_lengths)).any():
+    while oversampling - (mask := _reject_link_length(link_lengths)).sum() < batch_size:
         link_lengths[mask] = _sample_link_length(link_types[mask])
+    link_lengths = link_lengths[~mask][:batch_size]
+    link_twists = link_twists[~mask][:batch_size]
 
     morph = torch.cat([link_twists.unsqueeze(-1), link_lengths], dim=2)
 
@@ -250,11 +251,12 @@ def sample_morph(num_robots: int, dof: int, analytically_solvable: bool) -> Floa
    Returns:
        MDH parameters (alpha, a, d) describing the robot morphology
    """
-    morph = _sample_morph(num_robots, dof, analytically_solvable)
-    while (mask := _reject_morph(morph)).any():
+    num_samples = int(num_robots * 1.5)
+    morph = _sample_morph(num_samples, dof, analytically_solvable)
+    while num_samples - (mask := _reject_morph(morph)).sum() < num_robots:
         morph[mask] = _sample_morph(mask.sum().item(), dof, analytically_solvable)
 
-    return morph
+    return morph[~mask][:num_robots]
 
 
 # @jaxtyped(typechecker=beartype)
@@ -302,7 +304,6 @@ def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
     pre_capsule = capsules[:, 3, :]
     pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 2, :]
     pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 1, :]
-    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 0, :]
 
     # Get closest non-zero capsule after joint
     post_capsule = capsules[:, -2, :]
