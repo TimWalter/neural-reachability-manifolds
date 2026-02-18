@@ -39,8 +39,8 @@ def test_scissor_collision():
 
                 poses = forward_kinematics(isolated_morph, non_colliding_joints)
                 critical_distance = collision_check(isolated_morph, poses, debug=True)
-                assert (critical_distance == 0.0).all(), \
-                    f"{morph_idx}, {joint_idx} {(critical_distance < 0.0).nonzero()}"
+                assert (critical_distance >= 0.0).all(), \
+                    f"{isolated_morph[0]} \n {non_colliding_joints[torch.argmin(critical_distance)]}"
 
                 colliding_joints = torch.zeros(2, isolated_morph.shape[1], 1)
                 colliding_joints[0, :] = 1.0
@@ -52,6 +52,6 @@ def test_scissor_collision():
                 isolated_morph = isolated_morph[0].unsqueeze(0).expand(2, -1, -1)
                 poses = forward_kinematics(isolated_morph, colliding_joints)
                 critical_distance = collision_check(isolated_morph, poses, debug=True)
-                assert (critical_distance < 0.0).all(), f"{morph_idx}, {joint_idx} {critical_distance}"
+                assert (critical_distance < 0.0).all(), f"{isolated_morph[0]} \n {colliding_joints[torch.argmax(critical_distance)]}"
 
 

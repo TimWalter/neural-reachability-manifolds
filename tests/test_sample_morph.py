@@ -1,7 +1,7 @@
 import torch
 
 from neural_capability_maps.dataset.morphology import sample_morph, _reject_morph
-from neural_capability_maps.dataset.kinematics import forward_kinematics, morph_to_eaik
+from neural_capability_maps.dataset.kinematics import forward_kinematics, morph_to_eaik, is_analytically_solvable
 
 torch.set_default_dtype(torch.float64)
 
@@ -50,6 +50,22 @@ def test_analytically_solvable_6dof():
     for i, morph in enumerate(morphs):
         eaik = morph_to_eaik(morph)
         assert eaik.hasKnownDecomposition(), f"{i}, {morph}"
+
+
+def test_is_analytically_solvable_5dof():
+    n_robots = 500
+    morphs = sample_morph(n_robots, 5, True)
+    assert is_analytically_solvable(morphs).all(), morphs[~is_analytically_solvable(morphs)]
+    morphs = sample_morph(n_robots, 5, False)
+    assert not is_analytically_solvable(morphs).all()
+
+
+def test_is_analytically_solvable_6dof():
+    n_robots = 10
+    morphs = sample_morph(n_robots, 6, True)
+    assert is_analytically_solvable(morphs).all(), morphs[~is_analytically_solvable(morphs)]
+    morphs = sample_morph(n_robots, 6, False)
+    assert not is_analytically_solvable(morphs).all()
 
 
 def test_irrelevant_size():
