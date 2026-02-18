@@ -1,5 +1,6 @@
 import math
 
+import numpy as np
 import torch
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -12,6 +13,9 @@ import seaborn as sns
 from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
 from neural_capability_maps.dataset.self_collision import get_capsules, LINK_RADIUS
 from neural_capability_maps.dataset.kinematics import forward_kinematics, transformation_matrix
+
+def to_ploty_color(color):
+    return f"rgb{tuple((255*np.array(color)).astype(int).tolist())}"
 
 
 @jaxtyped(typechecker=beartype)
@@ -362,14 +366,14 @@ def visualise_workspace(mdh, poses, labels):
 
 def display_geodesic(preds, names, return_fig: bool = False):
     fig = go.Figure()
-    spacing = 1.2
+    spacing = 1.3
     for i, (pred, name) in enumerate(zip(preds, names)):
         fig.add_trace(go.Scatter(
             x=torch.linspace(0, 1, pred.shape[0]),
             y=pred.float() + i * spacing,
             name=name,
-            line=dict(width=2.5),
-            mode='lines'
+            line=dict(width=2.5,color=to_ploty_color(sns.color_palette("colorblind", len(preds))[i])),
+            mode='lines',
         ))
 
         # Optional: Add a subtle baseline for each lane to make it readable
@@ -379,18 +383,33 @@ def display_geodesic(preds, names, return_fig: bool = False):
         )
 
     fig.update_layout(
-        xaxis_title="Path Progress (t)",
+        xaxis_title=r"Geodesic Progress",
+        yaxis_title=r"Reachability",
+        font=dict(
+            family="Times New Roman, TeX Gyre Termes, serif", # Match your LaTeX font
+            size=24
+        ),
         yaxis=dict(
             tickmode='array',
             tickvals=[item for i in range(len(preds)) for item in (i * spacing, i * spacing + 0.5, i * spacing + 1.0)],
-            ticktext=[item for name in names for item in ('F', f'<b>{name}</b>', 'T')],
+            ticktext=[item for name in names for item in ('0', '', '1')],
+            # Use this property to move R and UR away from the axis
+            ticklabelstandoff=20,
             gridcolor='rgba(0,0,0,0.05)',
-            fixedrange=True
+            fixedrange=True,
+            automargin=True
         ),
         template="plotly_white",
-        height=600,
+        height=400,
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=22)
+        )
     )
     if return_fig:
         return fig
@@ -427,14 +446,13 @@ def display_slice(preds, names, morph, return_fig: bool = False):
     axis_names = ['X', 'Y', 'Z']
     x_label, y_label = [axis_names[i] for i, m in enumerate(axes_mask) if m]
     coords = axes_range
-
     for i, pred in enumerate(preds):
         fig.add_trace(
             go.Heatmap(
                 z=pred.reshape(steps, steps).float(),
                 x=coords,
                 y=coords,
-                colorscale='Viridis',
+                colorscale=[[0, '#ffffff'], [1, '#555555']],
                 showscale=False,
                 hovertemplate=f"{x_label}: %{{x}}<br>{y_label}: %{{y}}<br>Value: %{{z}}<extra></extra>"
             ),
@@ -445,8 +463,42 @@ def display_slice(preds, names, morph, return_fig: bool = False):
         height=400 * n_rows,
         width=400 * n_cols
     )
-    fig.update_xaxes(title_text=x_label, showticklabels=False)
-    fig.update_yaxes(title_text=y_label, showticklabels=False)
+    fig.update_xaxes(
+        title_text=x_label,
+        showticklabels=False,
+        showgrid=False,
+        zeroline=False,
+        showline=True,      # Enables the axis line
+        linewidth=1,        # Border thickness
+        linecolor='rgba(0,0,0,0.25)',  # Border color
+        mirror=True,        # Ensures the border appears on all 4 sides
+        title_font_size=24
+    )
+    fig.update_yaxes(
+        title_text=y_label,
+        showticklabels=False,
+        showgrid=False,
+        zeroline=False,
+        showline=True,      # Enables the axis line
+        linewidth=1,        # Border thickness
+        linecolor='rgba(0,0,0,0.25)',  # Border color
+        mirror=True,        # Ensures the border appears on all 4 sides
+        title_font_size=24
+    )
+    fig.update_layout(
+        font=dict(
+            family="Times New Roman, TeX Gyre Termes, serif", # Match your LaTeX font
+            size=24
+        ),
+        template="plotly_white",
+    )
+    fig.update_annotations(
+        font=dict(
+            family="Times New Roman, TeX Gyre Termes, serif",  # Matches the "Reachability" and "Geodesic Progress" labels [cite: 1, 12]
+            size=24,         # Adjust this number to your preferred header size
+        )
+    )
+
     if return_fig:
         return fig
     else:
