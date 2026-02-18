@@ -2,7 +2,7 @@ import torch
 
 from torch import Tensor
 from beartype import beartype
-from jaxtyping import jaxtyped, Float, Int, Float64
+from jaxtyping import jaxtyped, Float, Int, Float64, Bool
 from eaik.IK_Homogeneous import HomogeneousRobot
 from scipy.spatial.transform import Rotation
 
@@ -113,6 +113,39 @@ def unique_indices(indices: Int[Tensor, "batch"],
 
     return indices, manipulability, other
 
+def is_analytically_solvable(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batch_size"]:
+    """
+    Determine whether a robot is solvable by EAIK.
+
+    Args:
+        morph: MDH parameters encoding the robot geometry.
+
+    Returns:
+        Mask indicating whether the robot is solvable.
+    """
+    dof = morph.shape[1] - 1
+    if dof < 5:
+        mask = torch.ones(morph.shape[0], dtype=torch.bool, device=morph.device)
+    else:
+        mask = torch.zeros(morph.shape[0], dtype=torch.bool, device=morph.device)
+        if dof == 5:
+            # The last or first two axes intersect
+            mask |= (morph[:, 1, 1] == 0) | (morph[:, 4, 1] == 0)
+            # One pair of consecutive, intermediate axes intersects while the other is parallel
+            mask |= ((morph[:, 2, 1] == 0) & (morph[:, 4, 0] == 0)) | ((morph[:, 4, 1] == 0) & (morph[:, 2, 0] == 0))
+            # Any three consecutive axes are parallel
+            mask |= ((morph[:, 1:, 0] == 0) & (morph[:, :-1, 0] == 0)).any(dim=1)
+        elif dof == 6:
+            # Spherical wrist at the beginning or end
+            mask |= (morph[:, 1, 1] == 0) & (morph[:, 1, 2] == 0) & (morph[:, 2, 1] == 0)
+            mask |= (morph[:, 4, 1] == 0) & (morph[:, 4, 2] == 0) & (morph[:, 5, 1] == 0)
+            # 3 Parallel & 2 intersecting axes on opposing ends
+            mask |= (morph[:, 1, 0] == 0) & (morph[:, 2, 0] == 0) & (morph[:, 5, 1] == 0)
+            mask |= (morph[:, 4, 0] == 0) & (morph[:, 5, 0] == 0) & (morph[:, 1, 1] == 0)
+            # 3 Parallel inner axes
+            mask |= (morph[:, 3, 0] == 0) & ((morph[:, 2, 0] == 0) | (morph[:, 4, 0] == 0))
+
+    return mask
 
 # @jaxtyped(typechecker=beartype)
 def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
@@ -131,10 +164,9 @@ def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
         The joint angles (theta_i) for each joint that achieve the desired poses with the highest manipulability and
         the manipulability values.
     """
-    try:
-        joints, manipulability = analytical_inverse_kinematics(mdh, poses)
-    except RuntimeError as e:
-        print(f"{e} \n Falling back numerical IK.")
+    if is_analytically_solvable(mdh.unsqueeze(0)):
+        joints, manipulability = analytical_inverse_kinematics(mdh.cpu(), poses.cpu())
+    else:
         joints, manipulability = numerical_inverse_kinematics(mdh, poses)
 
     return joints, manipulability
@@ -157,8 +189,7 @@ def morph_to_eaik(mdh: Float[Tensor, "dofp1 3"]) -> HomogeneousRobot:
     global_coords[0] = local_coord[0]
     for i in range(1, len(local_coord)):
         global_coords[i] = global_coords[i - 1] @ local_coord[i]
-    joint_transforms = torch.cat((global_coords, global_coords[-1].unsqueeze(0)), dim=0)
-    return HomogeneousRobot(joint_transforms.cpu().numpy(), fixed_axes=[(mdh.shape[0] - 1, 0.0)])
+    return HomogeneousRobot(global_coords.cpu().numpy())
 
 
 # @jaxtyped(typechecker=beartype)
@@ -180,7 +211,9 @@ def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Flo
     if not eaik_bot.hasKnownDecomposition():
         raise RuntimeError(f"Robot is not analytically solvable. {mdh}")
     solutions = eaik_bot.IK_batched(poses.cpu().numpy())
-    joints = [torch.from_numpy(sol.Q.copy()).unsqueeze(-1) if sol.num_solutions() != 0
+    joints = [torch.cat([torch.from_numpy(sol.Q.copy()).unsqueeze(-1),
+                         torch.zeros(sol.num_solutions(), 1, 1)
+                         ],dim=1) if sol.num_solutions() != 0
               else torch.empty(0, mdh.shape[0], 1, dtype=torch.double)
               for sol in solutions]
 
@@ -240,96 +273,109 @@ def analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Te
 
 
 # @jaxtyped(typechecker=beartype)
-def numerical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Float[Tensor, "batch 4 4"]) \
+def numerical_inverse_kinematics(inp_mdh: Float[Tensor, "dofp1 3"], inp_poses: Float[Tensor, "batch 4 4"]) \
         -> tuple[Float[Tensor, "batch dofp1 1"], Float[Tensor, "batch"]]:
     """
     Fast Levenberg-Marquardt IK solver using Cholesky decomposition.
     """
-    max_iter = 100
-    damping = 1e-3
-    num_seeds = 10
+    j = []
+    m = []
 
-    device = mdh.device
-    dtype = mdh.dtype
-    batch_size = poses.shape[0]
-    dof = mdh.shape[0] - 1
+    for batch_idx in range(0, inp_poses.shape[0], 100000):
+        poses = inp_poses[batch_idx:batch_idx + 100000]
 
-    total_batch = batch_size * num_seeds
+        max_iter = 100
+        damping = 1e-3
+        num_seeds = 10
 
-    mdh = mdh.unsqueeze(0).expand(total_batch, -1, -1)
-    poses = poses.unsqueeze(1).expand(-1, num_seeds, -1, -1).reshape(total_batch, 4, 4)
+        device = inp_mdh.device
+        dtype = inp_mdh.dtype
+        batch_size = poses.shape[0]
+        dof = inp_mdh.shape[0] - 1
 
-    # Initialize joints (randomly)
-    joints = (torch.rand(total_batch, dof, 1, device=device, dtype=dtype) * 2 * torch.pi) - torch.pi
+        total_batch = batch_size * num_seeds
 
-    # Pre-allocate damping matrix (Tikhonov regularization)
-    damping_vals = torch.full((total_batch, 1, 1), damping, device=device, dtype=dtype)
-    prev_error_norm = torch.full((total_batch,), float('inf'), device=device, dtype=dtype)
+        mdh = inp_mdh.unsqueeze(0).expand(total_batch, -1, -1)
+        poses = poses.unsqueeze(1).expand(-1, num_seeds, -1, -1).reshape(total_batch, 4, 4)
 
-    for _ in range(max_iter):
-        # 1. Forward Kinematics
+        # Initialize joints (randomly)
+        joints = (torch.rand(total_batch, dof, 1, device=device, dtype=dtype) * 2 * torch.pi) - torch.pi
+
+        # Pre-allocate damping matrix (Tikhonov regularization)
+        damping_vals = torch.full((total_batch, 1, 1), damping, device=device, dtype=dtype)
+        prev_error_norm = torch.full((total_batch,), float('inf'), device=device, dtype=dtype)
+
+        for _ in range(max_iter):
+            # 1. Forward Kinematics
+            full_joints = torch.cat([joints, torch.zeros(total_batch, 1, 1, device=device, dtype=dtype)], dim=1)
+            reached_pose = forward_kinematics(mdh, full_joints)
+
+            # 2. Compute Error (6D)
+            error = torch.cat([r3.log(reached_pose[..., -1, :3, 3], poses[..., :3, 3]),
+                               torch.einsum('bij,bj->bi', reached_pose[..., -1, :3, :3],
+                                            so3.log(reached_pose[..., -1, :3, :3], poses[..., :3, :3]))], dim=-1).unsqueeze(
+                -1)
+            active = error[..., 0].norm(dim=-1) > EPS
+
+            # 3. Jacobian
+            jacobian = geometric_jacobian(reached_pose)  # [B, 6, dof]
+
+            # Adaptive Damping
+            got_worse = error[..., 0].norm(dim=-1) > prev_error_norm
+            damping_vals[got_worse] *= 2.0
+            damping_vals[~got_worse & active] *= 0.7
+            damping_vals.clamp_(1e-6, 1e3)
+            prev_error_norm = error[..., 0].norm(dim=-1).clone()
+            diag_damp = torch.eye(dof, device=device, dtype=dtype).unsqueeze(0) * damping_vals
+
+            # 4. Solve Normal Equations: (J^T J + λI) Δθ = J^T e
+            lhs = jacobian.transpose(-2, -1) @ jacobian + diag_damp
+            rhs = jacobian.transpose(-2, -1) @ error
+
+            # Cholesky solve is numerically stable for Positive Definite matrices (which damped J^T J is)
+            # We assume damping is sufficient to avoid singularity.
+            delta_theta = torch.linalg.solve(lhs, rhs)
+
+            # 5. Update
+            joints[active] = joints[active] + delta_theta[active]
+
+        # Finalize and Wrap
+        joints = torch.atan2(torch.sin(joints), torch.cos(joints))
         full_joints = torch.cat([joints, torch.zeros(total_batch, 1, 1, device=device, dtype=dtype)], dim=1)
+
+        # Metrics
         reached_pose = forward_kinematics(mdh, full_joints)
+        jacobian = geometric_jacobian(reached_pose)
+        manipulability = yoshikawa_manipulability(jacobian)
 
-        # 2. Compute Error (6D)
-        error = torch.cat([r3.log(reached_pose[..., -1, :3, 3], poses[..., :3, 3]),
-                           torch.einsum('bij,bj->bi', reached_pose[..., -1, :3, :3],
-                                        so3.log(reached_pose[..., -1, :3, :3], poses[..., :3, :3]))], dim=-1).unsqueeze(
-            -1)
-        active = error[..., 0].norm(dim=-1) > EPS
+        self_collision = collision_check(mdh, reached_pose)
+        error = se3.distance(reached_pose[:, -1, :, :], poses).squeeze(-1)
 
-        # 3. Jacobian
-        jacobian = geometric_jacobian(reached_pose)  # [B, 6, dof]
+        # Gather best solutions
+        full_joints = full_joints.reshape(batch_size, num_seeds, dof + 1, 1)
+        manipulability = manipulability.reshape(batch_size, num_seeds)
+        self_collision = self_collision.reshape(batch_size, num_seeds)
+        error = error.reshape(batch_size, num_seeds)
 
-        # Adaptive Damping
-        got_worse = error[..., 0].norm(dim=-1) > prev_error_norm
-        damping_vals[got_worse] *= 2.0
-        damping_vals[~got_worse & active] *= 0.7
-        damping_vals.clamp_(1e-6, 1e3)
-        prev_error_norm = error[..., 0].norm(dim=-1).clone()
-        diag_damp = torch.eye(dof, device=device, dtype=dtype).unsqueeze(0) * damping_vals
+        error_masked = error.clone()
+        error_masked[self_collision] = torch.inf
+        best_seed_idx = error_masked.argmin(dim=1)  # [batch]
 
-        # 4. Solve Normal Equations: (J^T J + λI) Δθ = J^T e
-        lhs = jacobian.transpose(-2, -1) @ jacobian + diag_damp
-        rhs = jacobian.transpose(-2, -1) @ error
+        batch_indices = torch.arange(batch_size, device=device)
+        best_joints = full_joints[batch_indices, best_seed_idx]  # [batch, dof+1, 1]
+        best_manipulability = manipulability[batch_indices, best_seed_idx]  # [batch]
+        best_error = error[batch_indices, best_seed_idx]  # [batch]
+        best_collision = self_collision[batch_indices, best_seed_idx]  # [batch]
 
-        # Cholesky solve is numerically stable for Positive Definite matrices (which damped J^T J is)
-        # We assume damping is sufficient to avoid singularity.
-        delta_theta = torch.linalg.solve(lhs, rhs)
+        # Strict success check
+        mask = (best_error < EPS) & ~best_collision
+        best_manipulability[~mask] = -1.0
 
-        # 5. Update
-        joints[active] = joints[active] + delta_theta[active]
 
-    # Finalize and Wrap
-    joints = torch.atan2(torch.sin(joints), torch.cos(joints))
-    full_joints = torch.cat([joints, torch.zeros(total_batch, 1, 1, device=device, dtype=dtype)], dim=1)
+        j.append(best_joints)
+        m.append(best_manipulability)
 
-    # Metrics
-    reached_pose = forward_kinematics(mdh, full_joints)
-    jacobian = geometric_jacobian(reached_pose)
-    manipulability = yoshikawa_manipulability(jacobian)
-
-    self_collision = collision_check(mdh, reached_pose)
-    error = se3.distance(reached_pose[:, -1, :, :], poses).squeeze(-1)
-
-    # Gather best solutions
-    full_joints = full_joints.reshape(batch_size, num_seeds, dof + 1, 1)
-    manipulability = manipulability.reshape(batch_size, num_seeds)
-    self_collision = self_collision.reshape(batch_size, num_seeds)
-    error = error.reshape(batch_size, num_seeds)
-
-    error_masked = error.clone()
-    error_masked[self_collision] = torch.inf
-    best_seed_idx = error_masked.argmin(dim=1)  # [batch]
-
-    batch_indices = torch.arange(batch_size, device=device)
-    best_joints = full_joints[batch_indices, best_seed_idx]  # [batch, dof+1, 1]
-    best_manipulability = manipulability[batch_indices, best_seed_idx]  # [batch]
-    best_error = error[batch_indices, best_seed_idx]  # [batch]
-    best_collision = self_collision[batch_indices, best_seed_idx]  # [batch]
-
-    # Strict success check
-    mask = (best_error < EPS) & ~best_collision
-    best_manipulability[~mask] = -1.0
+    best_joints = torch.cat(j, dim=0)
+    best_manipulability = torch.cat(m, dim=0)
 
     return best_joints, best_manipulability
