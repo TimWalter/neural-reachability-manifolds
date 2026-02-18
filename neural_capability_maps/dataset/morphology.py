@@ -91,11 +91,11 @@ def _sample_analytically_solvable_link_types_and_twist(batch_size: int, dof: int
     link_twist = _sample_link_twist(link_type)
     if dof == 5:
         types = torch.randint(0, 3, size=(batch_size,))
-        """
+        r"""
         5 DOF Analytically solvable robot types:
             0 <=> (a_1=0) | (a_4=0)                 - The last or first two axes intersect
             1 <=> (a_2=0 & α_4=0) | (a_3=0 & α_3=0) - One pair of consecutive, intermediate axes intersects while the other is parallel
-            2 <=> α_i=0 & α_{i+1}=0, i\in[1, 3]                 - Any three consecutive axes are parallel
+            2 <=> α_i=0 & α_{i+1}=0, i \in [1, 3]                 - Any three consecutive axes are parallel
         """
         link_type[types == 0, torch.randint(0, 2, ((types == 0).sum().item(),)) * 3 + 1] = 1
 
