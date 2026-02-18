@@ -165,7 +165,10 @@ def inverse_kinematics(mdh: Float[Tensor, "dofp1 3"],
         the manipulability values.
     """
     if is_analytically_solvable(mdh.unsqueeze(0)):
-        joints, manipulability = analytical_inverse_kinematics(mdh.cpu(), poses.cpu())
+        try:
+            joints, manipulability = analytical_inverse_kinematics(mdh.cpu(), poses.cpu())
+        except RuntimeError:
+            joints, manipulability = numerical_inverse_kinematics(mdh, poses)
     else:
         joints, manipulability = numerical_inverse_kinematics(mdh, poses)
 
@@ -211,6 +214,8 @@ def pure_analytical_inverse_kinematics(mdh: Float[Tensor, "dofp1 3"], poses: Flo
     if not eaik_bot.hasKnownDecomposition():
         raise RuntimeError(f"Robot is not analytically solvable. {mdh}")
     solutions = eaik_bot.IK_batched(poses.cpu().numpy())
+    if torch.tensor([sol.num_solutions() == 0 for sol in solutions]).all():
+        raise RuntimeError(f"EAIK bug.")
     joints = [torch.cat([torch.from_numpy(sol.Q.copy()).unsqueeze(-1),
                          torch.zeros(sol.num_solutions(), 1, 1)
                          ],dim=1) if sol.num_solutions() != 0
