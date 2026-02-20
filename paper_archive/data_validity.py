@@ -3,6 +3,8 @@ from tabulate import tabulate
 
 import numpy as np
 from scipy.stats import bootstrap
+
+
 def ci_95(data):
     if len(data) < 2:
         return (-1, -1)
@@ -15,89 +17,108 @@ import neural_capability_maps.dataset.so3 as so3
 import neural_capability_maps.dataset.se3 as se3
 
 from neural_capability_maps.dataset.morphology import sample_morph
-from neural_capability_maps.dataset.kinematics import analytical_inverse_kinematics, numerical_inverse_kinematics
+from neural_capability_maps.dataset.kinematics import inverse_kinematics
 from neural_capability_maps.dataset.capability_map import sample_poses_in_reach, estimate_capability_map
 from neural_capability_maps.logger import binary_confusion_matrix
 
-print(f"R3 Cells: {r3.N_CELLS}, actually {(torch.linalg.norm(r3.cell(torch.arange(0, r3.N_CELLS)), dim=1) < 1.0).sum()
-}, at {r3.DISTANCE_BETWEEN_CELLS}")
-print(f"SO3 Cells: {so3.N_CELLS} at {so3.MIN_DISTANCE_BETWEEN_CELLS} - {so3.MAX_DISTANCE_BETWEEN_CELLS}")
-print(f"SE3 Cells: {se3.N_CELLS} at {se3.MIN_DISTANCE_BETWEEN_CELLS} - {se3.MAX_DISTANCE_BETWEEN_CELLS}")
-
-# Benchmark results on LRZ for 100 robots, analytically solvable and not
 torch.manual_seed(1)
-for analytically_solvable in [True, False]:
-    morphs = sample_morph(100, 6, analytically_solvable)
 
-    tp = []
-    fn = []
-    fp = []
-    tn = []
-    acc = []
-    f1 = []
-    minutes = []
-    reachable = []
+# Table 1
+for level in range(1, 5):
+    se3.set_level(level)
+    print(f"LEVEL {se3.LEVEL}")
+    print(f"Fidelity of the discretisation|\t"
+          f"# Cells {so3.N_CELLS * (torch.linalg.norm(r3.cell(torch.arange(0, r3.N_CELLS)), dim=1) < 1.0).sum()}|\t"
+          f"Distance between neighbouring cells [{se3.MIN_DISTANCE_BETWEEN_CELLS:.3f}, {se3.MAX_DISTANCE_BETWEEN_CELLS:.3f}]\n")
+
+    morphs = sample_morph(100, 6, False)
+
+    coverage = []
+    runtime = []
     benchmarks = []
+    metrics = []
     for morph_idx, morph in enumerate(morphs):
         cell_indices = se3.index(sample_poses_in_reach(100_000, morph))
-        if analytically_solvable:
-            _, manipulability = analytical_inverse_kinematics(morph, se3.cell(cell_indices.to(morph.device)))
-        else:
-            _, manipulability = numerical_inverse_kinematics(morph.to("cuda"), se3.cell(cell_indices.to(morph.device)).to("cuda"))
+
+        _, manipulability = inverse_kinematics(morph.to("cuda"), se3.cell(cell_indices.to(morph.device)).to("cuda"))
         ground_truth = manipulability.cpu() != -1
-        reachable += [ground_truth.sum() / ground_truth.shape[0] * 100]
 
-        cell_indices = cell_indices.cpu()
+        coverage += [ground_truth.sum() / ground_truth.shape[0] * 100]
+        runtime += [0]
 
-        morph = morph.to("cuda")
-        minutes += [0]
         true_positives = 0.0
         r_indices = torch.empty(0, dtype=torch.int64)
-        while true_positives < 95.0 and minutes[-1] < 30:
-            new_r_indices, benchmark = estimate_capability_map(morph, True)
+        while true_positives < 95.0 and runtime[-1] < 600:
+            new_r_indices, benchmark = estimate_capability_map(morph.to("cuda"), True, seconds=1)
             r_indices = torch.cat([r_indices, new_r_indices]).unique()
             benchmarks += [torch.tensor(benchmark)]
-            minutes[-1] += 1
+            runtime[-1] += 1
 
             labels = torch.isin(cell_indices, r_indices)
 
-            (true_positives, false_negatives), (false_positives, true_negatives) = binary_confusion_matrix(labels,
-                                                                                                           ground_truth)
-        tp += [true_positives]
-        fn += [false_negatives]
-        fp += [false_positives]
-        tn += [true_negatives]
-        acc += [(ground_truth == labels).sum() / labels.shape[0] * 100]
-        f1 += [2 * true_positives / (2 * true_positives + false_positives + false_negatives) * 100]
+            ((true_positives, false_negatives),
+             (false_positives, true_negatives)) = binary_confusion_matrix(labels, ground_truth)
+        metrics += [[2 * true_positives / (2 * true_positives + false_positives + false_negatives) * 100,
+                     (ground_truth == labels).sum() / labels.shape[0] * 100,
+                     true_positives,
+                     false_negatives,
+                     false_positives,
+                     true_negatives]]
 
-    mean_benchmark = torch.stack(benchmarks).mean(dim=0, keepdim=True).tolist()
-    mean_benchmark[0][0] = int(mean_benchmark[0][0])
-    mean_benchmark[0][1] = int(mean_benchmark[0][1])
-    print(tabulate(mean_benchmark,
-                   headers=["Filled Cells", "Total Samples<br>(Speed)", "Efficiency<br>(Total)", "Efficiency<br>(Unique)",
-                            "Efficiency<br>(Collision)"], floatfmt=".4f", intfmt=",", tablefmt="github"))
-    mean_tp = sum(tp) / len(tp)
-    mean_tn = sum(tn) / len(tn)
-    mean_fp = sum(fp) / len(fp)
-    mean_fn = sum(fn) / len(fn)
-    mean_f1 = sum(f1) / len(f1)
-    mean_acc = sum(acc) / len(acc)
-    mean_reachable = sum(reachable) / len(reachable)
-    mean_minutes = sum(minutes) / len(minutes)
-    min_tp, max_tp = ci_95(tp)
-    min_tn, max_tn = ci_95(tn)
-    min_fp, max_fp = ci_95(fp)
-    min_fn, max_fn = ci_95(fn)
-    min_f1, max_f1 = ci_95(f1)
-    min_acc, max_acc = ci_95(acc)
-    min_reachable, max_reachable = ci_95(reachable)
-    min_minutes, max_minutes = ci_95(minutes)
-    print(tabulate([[mean_tp, mean_tn, mean_fp, mean_fn, mean_f1, mean_acc, mean_reachable, mean_minutes]],
-                   headers=["True Positives", "True Negatives", "False Positives", "False Negatives",
-                            "F1 Score", "Accuracy", "Reachable", "Minutes"], floatfmt=".2f", tablefmt="github"))
-    print(tabulate([[min_tp, min_tn, min_fp, min_fn, min_f1, min_acc, min_reachable, min_minutes]],
-                   headers=["True Positives", "True Negatives", "False Positives", "False Negatives",
-                            "F1 Score", "Accuracy", "Reachable", "Minutes"], floatfmt=".2f", tablefmt="github"))
-    print(tabulate([[max_tp, max_tn, max_fp, max_fn, max_f1, max_acc, max_reachable, max_minutes]],
-                   headers=["True Positives", "True Negatives", "False Positives", "False Negatives",
-                            "F1 Score", "Accuracy", "Reachable", "Minutes"], floatfmt=".2f", tablefmt="github"))
+    coverage = torch.tensor(coverage)
+    runtime = torch.tensor(runtime)
+    benchmarks = torch.stack(benchmarks)
+    metrics = torch.tensor(metrics)
+
+    # Mean
+    mean_coverage = [coverage.mean().item()]
+    mean_runtime = [runtime.float().mean().item()]
+    mean_benchmark = benchmarks.mean(dim=0).tolist()
+    mean_benchmark[0] = int(mean_benchmark[0])
+    mean_benchmark[1] = int(mean_benchmark[1])
+    mean_metrics = metrics.mean(dim=0).tolist()
+    print(mean_coverage)
+    print(mean_runtime)
+    print(mean_benchmark)
+    print(mean_metrics)
+    print("MEAN")
+    headers = ["Coverage (%)",
+               "Runtime (s)",
+               "Filled Cells / 1s",
+               "Total Samples / 1s",
+               "Efficiency (%)<br>(Total)",
+               "Efficiency (%)<br>(Unique)",
+               "Efficiency (%)<br>(Collision)",
+               "F1 Score (%)",
+               "Accuracy (%)",
+               "True Positives (%)",
+               "False Positives (%)",
+               "False Negatives (%)",
+               "True Negatives (%)"]
+    print(tabulate([mean_coverage + mean_runtime + mean_benchmark + mean_metrics],
+                   headers=headers, floatfmt=".4f", intfmt=",", tablefmt="github"))
+    # CI
+    min_coverage, max_coverage = ci_95(coverage.numpy())
+    min_runtime, max_runtime = ci_95(runtime.numpy())
+    min_benchmark = []
+    max_benchmark = []
+    for bench_idx in range(5):
+        min_bench, max_bench = ci_95(benchmarks[:, bench_idx].numpy())
+        if bench_idx == 0 or bench_idx == 1:
+            min_bench = int(min_bench)
+            max_bench = int(max_bench)
+
+        min_benchmark += [min_bench]
+        max_benchmark += [max_bench]
+    min_metrics = []
+    max_metrics = []
+    for metric_idx in range(6):
+        min_metric, max_metric = ci_95(metrics[:, metric_idx].numpy())
+        min_metrics += [min_metric]
+        max_metrics += [max_metric]
+    print("CI Lower")
+    print(tabulate([[min_coverage] + [min_runtime] + min_benchmark + min_metrics],
+                   headers=headers, floatfmt=".4f", intfmt=",", tablefmt="github"))
+    print("CI Upper")
+    print(tabulate([[max_coverage] + [max_runtime] + max_benchmark + max_metrics],
+                   headers=headers, floatfmt=".4f", intfmt=",", tablefmt="github"))
