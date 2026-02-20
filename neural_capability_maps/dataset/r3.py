@@ -3,6 +3,19 @@ from torch import Tensor
 from jaxtyping import Float, Int64, jaxtyped
 from beartype import beartype
 
+LEVEL, N_DIV, DISTANCE_BETWEEN_CELLS, N_CELLS = [None] * 4
+
+
+def set_level(level: int = 3):
+    global LEVEL, N_DIV, DISTANCE_BETWEEN_CELLS, N_CELLS
+    LEVEL = level
+    N_DIV = {1: 10, 2: 19, 3: 37, 4: 69}[LEVEL]
+    DISTANCE_BETWEEN_CELLS = 2 / N_DIV
+    N_CELLS = N_DIV ** 3
+
+
+set_level()
+
 
 # @jaxtyped(typechecker=beartype)
 def distance(x1: Float[Tensor, "*batch 3"], x2: Float[Tensor, "*batch 3"]) -> Float[Tensor, "*batch 1"]:
@@ -17,11 +30,6 @@ def distance(x1: Float[Tensor, "*batch 3"], x2: Float[Tensor, "*batch 3"]) -> Fl
         Euclidean distance between vector x1 and x2.
     """
     return torch.norm(x1 - x2, dim=-1, keepdim=True)
-
-
-N_DIV = 36
-DISTANCE_BETWEEN_CELLS = 2 / N_DIV
-N_CELLS = N_DIV ** 3
 
 
 # @jaxtyped(typechecker=beartype)

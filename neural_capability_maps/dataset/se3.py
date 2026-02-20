@@ -7,6 +7,23 @@ from jaxtyping import jaxtyped, Float, Int64
 import neural_capability_maps.dataset.r3 as r3
 import neural_capability_maps.dataset.so3 as so3
 
+LEVEL, MIN_DISTANCE_BETWEEN_CELLS, MAX_DISTANCE_BETWEEN_CELLS, N_CELLS = [None] * 4
+
+
+def set_level(level: int = 3):
+    global LEVEL, MIN_DISTANCE_BETWEEN_CELLS, MAX_DISTANCE_BETWEEN_CELLS, N_CELLS
+    LEVEL = level
+    r3.set_level(level)
+    so3.set_level(level)
+    MIN_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
+                                           so3.MIN_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
+    MAX_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
+                                           so3.MAX_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
+    N_CELLS = r3.N_CELLS * so3.N_CELLS
+
+
+set_level()
+
 
 # @jaxtyped(typechecker=beartype)
 def distance(x1: Float[Tensor, "*batch 4 4"], x2: Float[Tensor, "*batch 4 4"]) -> Float[Tensor, "*batch 1"]:
@@ -30,12 +47,6 @@ def distance(x1: Float[Tensor, "*batch 4 4"], x2: Float[Tensor, "*batch 4 4"]) -
     t2 = x2[..., :3, 3]
     r2 = x2[..., :3, :3]
     return torch.sqrt(r3.distance(t1, t2) ** 2 / 8 + so3.distance(r1, r2) ** 2 / (2 * torch.pi ** 2))
-
-MIN_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
-                                       so3.MIN_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
-MAX_DISTANCE_BETWEEN_CELLS = math.sqrt(r3.DISTANCE_BETWEEN_CELLS ** 2 / 8 +
-                                       so3.MAX_DISTANCE_BETWEEN_CELLS ** 2 / (2 * torch.pi ** 2))
-N_CELLS = r3.N_CELLS * so3.N_CELLS
 
 
 # @jaxtyped(typechecker=beartype)

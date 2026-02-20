@@ -17,6 +17,98 @@ if not enabled:
 
 
 # @jaxtyped(typechecker=beartype)
+def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int64[Tensor, "n_div n_div n_div"]:
+    """
+    Generate lookup table.
+
+    Args:
+        n_div: Number of divisions along each axis.
+        cells: Cell centres.
+
+    Returns:
+        Lookup table.
+    """
+    indices = torch.cartesian_prod(*[torch.arange(n_div, device=cells.device)] * 3)
+    lookup_centre = Rotation.from_rotvec(((indices + 0.5) / n_div) * 2 * torch.pi - torch.pi).as_matrix()
+
+    nearest_indices_list = []
+    n_cells = cells.shape[0]
+    num_points = lookup_centre.shape[0]
+    # Have to do batches to avoid OOM
+    for i in range(0, num_points, 1000):
+        batch_centers = lookup_centre[i: i + 1000]
+        current_batch_size = batch_centers.shape[0]
+
+        x1 = cells.unsqueeze(0).expand(current_batch_size, n_cells, 3, 3).reshape(-1, 3, 3)
+        x2 = batch_centers.unsqueeze(1).expand(current_batch_size, n_cells, 3, 3).reshape(-1, 3, 3)
+
+        distances = distance(x1, x2).squeeze(-1)
+        distances = distances.view(current_batch_size, n_cells)
+
+        nearest_idx = torch.argmin(distances, dim=1)
+        nearest_indices_list.append(nearest_idx.cpu())
+
+    lookup = torch.cat(nearest_indices_list).view(n_div, n_div, n_div).to(torch.int64)
+    return lookup
+
+
+# @jaxtyped(typechecker=beartype)
+def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 6"]:
+    """
+    Generate indices for nearest neighbours.
+
+    Args:
+        cells: Cell centres.
+
+    Returns:
+        Nearest neighbour indices.
+    """
+    # Have to do batches to avoid OOM
+    nn = []
+    for i in range(0, cells.shape[0], 1000):
+        batch = cells[i: i + 1000]
+        current_batch_size = batch.shape[0]
+        x1 = batch.unsqueeze(1).expand(current_batch_size, cells.shape[0], 3, 3)
+        x2 = cells.unsqueeze(0).expand(current_batch_size, cells.shape[0], 3, 3)
+        distances = distance(x1, x2).squeeze(-1)
+        nn += [distances.argsort(dim=-1)[:, 1:7].cpu()]  # Exclude self (first column)
+    nn = torch.cat(nn, dim=0)
+    return nn.clone().to(torch.int64)
+
+
+LEVEL, MAX_DISTANCE_BETWEEN_CELLS, MIN_DISTANCE_BETWEEN_CELLS, _CELLS, N_CELLS, _LOOKUP, _NN = [None] * 7
+
+
+def set_level(level: int = 3):
+    global LEVEL, MAX_DISTANCE_BETWEEN_CELLS, MIN_DISTANCE_BETWEEN_CELLS, _CELLS, N_CELLS, _LOOKUP, _NN
+    LEVEL = level
+
+    MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792, 3: 0.1654, 4: 0.1390690207}[LEVEL]
+    MIN_DISTANCE_BETWEEN_CELLS = \
+        {1: 0.6283174157142639, 2: 0.3141574561595917, 3: 0.1570783555507660, 4: 0.0793029814958572}[LEVEL]
+
+    _CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
+    N_CELLS = _CELLS.shape[0]
+
+    lookup_path = Path(__file__).parent / f"lookup_{LEVEL}.pt"
+    if lookup_path.exists():
+        _LOOKUP = torch.load(lookup_path, map_location="cpu")
+    else:
+        _LOOKUP = _generate_lookup(256, _CELLS.to("cuda"))
+        torch.save(_LOOKUP, lookup_path)
+
+    nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"
+    if nn_path.exists():
+        _NN = torch.load(nn_path, map_location="cpu")
+    else:
+        _NN = _generate_nn(_CELLS.to("cuda"))
+        torch.save(_NN, nn_path)
+
+
+set_level()
+
+
+# @jaxtyped(typechecker=beartype)
 def distance(x1: Float[Tensor, "*batch 3 3"],
              x2: Float[Tensor, "*batch 3 3"]) -> Float[Tensor, "*batch 1"]:
     """
@@ -114,90 +206,6 @@ def nn(index: Int64[Tensor, "*batch"]) -> Int64[Tensor, "*batch 6"]:
         _NN = _NN.to(index.device)
 
     return _NN[index]
-
-
-# @jaxtyped(typechecker=beartype)
-def _generate_lookup(n_div: int, cells: Float[Tensor, "n_cells 3 3"]) -> Int64[Tensor, "n_div n_div n_div"]:
-    """
-    Generate lookup table.
-
-    Args:
-        n_div: Number of divisions along each axis.
-        cells: Cell centres.
-
-    Returns:
-        Lookup table.
-    """
-    indices = torch.cartesian_prod(*[torch.arange(n_div, device=cells.device)] * 3)
-    lookup_centre = Rotation.from_rotvec(((indices + 0.5) / n_div) * 2 * torch.pi - torch.pi).as_matrix()
-
-    nearest_indices_list = []
-    n_cells = cells.shape[0]
-    num_points = lookup_centre.shape[0]
-    # Have to do batches to avoid OOM
-    for i in range(0, num_points, 1000):
-        batch_centers = lookup_centre[i: i + 1000]
-        current_batch_size = batch_centers.shape[0]
-
-        x1 = cells.unsqueeze(0).expand(current_batch_size, n_cells, 3, 3).reshape(-1, 3, 3)
-        x2 = batch_centers.unsqueeze(1).expand(current_batch_size, n_cells, 3, 3).reshape(-1, 3, 3)
-
-        distances = distance(x1, x2).squeeze(-1)
-        distances = distances.view(current_batch_size, n_cells)
-
-        nearest_idx = torch.argmin(distances, dim=1)
-        nearest_indices_list.append(nearest_idx.cpu())
-
-    lookup = torch.cat(nearest_indices_list).view(n_div, n_div, n_div).to(torch.int64)
-    return lookup
-
-
-# @jaxtyped(typechecker=beartype)
-def _generate_nn(cells: Float[Tensor, "n_cells 3 3"]) -> Float[Tensor, "n_cells 6"]:
-    """
-    Generate indices for nearest neighbours.
-
-    Args:
-        cells: Cell centres.
-
-    Returns:
-        Nearest neighbour indices.
-    """
-    # Have to do batches to avoid OOM
-    nn = []
-    for i in range(0, cells.shape[0], 1000):
-        batch = cells[i: i + 1000]
-        current_batch_size = batch.shape[0]
-        x1 = batch.unsqueeze(1).expand(current_batch_size, cells.shape[0], 3, 3)
-        x2 = cells.unsqueeze(0).expand(current_batch_size, cells.shape[0], 3, 3)
-        distances = distance(x1, x2).squeeze(-1)
-        nn += [distances.argsort(dim=-1)[:, 1:7].cpu()]  # Exclude self (first column)
-    nn = torch.cat(nn, dim=0)
-    return nn.clone().to(torch.int64)
-
-
-LEVEL = 3
-
-MAX_DISTANCE_BETWEEN_CELLS = {1: 0.6527321338653564, 2: 0.3308008015155792, 3: 0.1654, 4: 0.1390690207}[LEVEL]
-MIN_DISTANCE_BETWEEN_CELLS = \
-{1: 0.6283174157142639, 2: 0.3141574561595917, 3: 0.1570783555507660, 4: 0.0793029814958572}[LEVEL]
-
-_CELLS = torch.load(Path(__file__).parent / f"cells_{LEVEL}.pt", map_location="cpu")  # From RWA
-N_CELLS = _CELLS.shape[0]
-
-lookup_path = Path(__file__).parent / f"lookup_{LEVEL}.pt"
-if lookup_path.exists():
-    _LOOKUP = torch.load(lookup_path, map_location="cpu")
-else:
-    _LOOKUP = _generate_lookup(256, _CELLS.to("cuda"))
-    torch.save(_LOOKUP, lookup_path)
-
-nn_path = Path(__file__).parent / f"nearest_neighbours_{LEVEL}.pt"
-if nn_path.exists():
-    _NN = torch.load(nn_path, map_location="cpu")
-else:
-    _NN = _generate_nn(_CELLS.to("cuda"))
-    torch.save(_NN, nn_path)
 
 
 # @jaxtyped(typechecker=beartype)
