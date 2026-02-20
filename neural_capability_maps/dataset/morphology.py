@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
-from jaxtyping import Float, Int, Bool
+from beartype import beartype
+from jaxtyping import Float, Int, Bool, jaxtyped
 
 from neural_capability_maps.dataset.kinematics import transformation_matrix, forward_kinematics
 from neural_capability_maps.dataset.self_collision import EPS, LINK_RADIUS, get_capsules, collision_check
@@ -12,8 +13,8 @@ def _sample_link_type(batch_size: int, dof: int) -> Int[Tensor, "batch_size {dof
     """
     Sample link types:
         0 <=> a≠0, d≠0 (General)
-        1 <=> a=0, d≠0 (Only link offset)
-        2 <=> a≠0, d=0 (Only link length)
+        1 <=> a=0, d≠0 (Only link length)
+        2 <=> a≠0, d=0 (Only link offset)
         3 <=> a=0, d=0 (Spherical wrist component)
     Args:
         batch_size: number of robots to sample
@@ -95,7 +96,7 @@ def _sample_analytically_solvable_link_types_and_twist(batch_size: int, dof: int
         5 DOF Analytically solvable robot types:
             0 <=> (a_1=0) | (a_4=0)                 - The last or first two axes intersect
             1 <=> (a_2=0 & α_4=0) | (a_3=0 & α_3=0) - One pair of consecutive, intermediate axes intersects while the other is parallel
-            2 <=> α_i=0 & α_{i+1}=0, i \in [1, 3]                 - Any three consecutive axes are parallel
+            2 <=> α_i=0 & α_{i+1}=0, i \in [1, 3]   - Any three consecutive axes are parallel
         """
         link_type[types == 0, torch.randint(0, 2, ((types == 0).sum().item(),)) * 3 + 1] = 1
 
@@ -215,6 +216,75 @@ def _sample_morph(batch_size: int, dof: int, analytically_solvable: bool) -> Flo
     return morph
 
 
+@jaxtyped(typechecker=beartype)
+def get_joint_limits(morph: Float[Tensor, "*batch dof 3"]) -> Float[Tensor, "*batch dof 2"]:
+    """
+    Compute joint limits based on the morphology to avoid self-collisions.
+
+    Args:
+        morph: MDH parameters encoding the robot geometry.
+
+    Returns:
+        Joint limits
+    """
+    joint_limits = torch.zeros(*morph.shape[:-1], 2, device=morph.device)
+
+    extended_morph = torch.cat([torch.zeros_like(morph[..., :1, :]), morph], dim=-2)
+    alpha0, a0, d0 = extended_morph[..., :-2, :].split(1, dim=-1)
+    alpha1, a1, d1 = extended_morph[..., 1:-1, :].split(1, dim=-1)
+
+    coordinate_fix = torch.eye(4, device=morph.device, dtype=morph.dtype).repeat(*morph.shape[:-2], morph.shape[-2] - 1, 1, 1)
+    wrist = (a1[..., 0] == 0) & (d1[..., 0] == 0)
+    coordinate_fix[wrist] = transformation_matrix(alpha0, a0, d0, torch.zeros_like(d0))[wrist]
+
+    plane_normal = torch.stack([
+        torch.zeros_like(alpha1),
+        -torch.sin(alpha1),
+        torch.cos(alpha1),
+        torch.zeros_like(alpha1)], dim=-1)
+    plane_anchor = torch.stack([
+        a1,
+        -d1 * torch.sin(alpha1),
+        d1 * torch.cos(alpha1),
+        torch.ones_like(alpha1)], dim=-1)
+
+    plane_normal = torch.sum(coordinate_fix * plane_normal, dim=-1)[..., :3]
+    plane_anchor = torch.sum(coordinate_fix * plane_anchor, dim=-1)[..., :3]
+
+    stacked_morph = torch.stack([extended_morph[..., :-2, :], extended_morph[..., 1:-1, :], extended_morph[..., 2:, :]], dim=-2)
+    stacked_morph[~wrist, 0, :] = 0.0
+    stacked_poses = forward_kinematics(stacked_morph, torch.zeros(*stacked_morph.shape[:-1], 1, device=morph.device))
+    start, end = get_capsules(stacked_morph, stacked_poses)
+    capsules = end - start
+
+    # Get closest non-zero capsule before joint
+    pre_capsule = capsules[..., 3, :]
+    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 2, :]
+    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 1, :]
+
+    # Get closest non-zero capsule after joint
+    post_capsule = capsules[..., -2, :]
+    post_capsule[mask] = capsules[mask := post_capsule.norm(dim=-1) < 1e-6, -1, :]
+
+    in_plane = ((pre_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
+    in_plane &= ((post_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
+
+    limited = (pre_capsule.norm(dim=-1) > EPS) & (post_capsule.norm(dim=-1) > EPS) & in_plane
+
+    mask = post_capsule.norm(dim=-1) > pre_capsule.norm(dim=-1)
+    arc = torch.arcsin(2 * LINK_RADIUS / post_capsule.norm(dim=-1))
+    arc[mask] = torch.arcsin(2 * LINK_RADIUS / pre_capsule.norm(dim=-1))[mask]
+
+    joint_limits[..., :-1, 0] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)  # Range
+    angle = torch.atan2(torch.sum(torch.cross(pre_capsule, post_capsule, dim=-1) * plane_normal, dim=-1),
+                        torch.sum(pre_capsule * post_capsule, dim=-1))
+    # if their angle becomes pi, they collide and are antiparallel
+    angle = torch.atan2(torch.sin(torch.pi - angle), torch.cos(torch.pi - angle))
+    joint_limits[..., :-1, 1] = torch.where(limited, angle + arc, -torch.pi)  # Offset
+
+    return joint_limits
+
+
 # @jaxtyped(typechecker=beartype)
 def _reject_morph(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "batch_size"]:
     """
@@ -227,8 +297,12 @@ def _reject_morph(morph: Float[Tensor, "batch_size dofp1 3"]) -> Bool[Tensor, "b
     Returns:
         Mask of rejected morphologies
     """
-    joints = 2 * torch.pi * torch.rand(morph.shape[0], 1000, morph.shape[1], 1) - torch.pi
+    joint_limits = get_joint_limits(morph)
+
+    joint_limits = joint_limits.unsqueeze(1).expand(-1, 1000, -1, -1)
     morph = morph.unsqueeze(1).expand(-1, 1000, -1, -1)
+    joints = torch.rand(*joint_limits.shape[:-1], 1, device=morph.device) * joint_limits[..., 0:1] + joint_limits[
+        ..., 1:2]
 
     poses = forward_kinematics(morph, joints)
     rejected = collision_check(morph, poses).all(dim=1)
@@ -257,75 +331,6 @@ def sample_morph(num_robots: int, dof: int, analytically_solvable: bool) -> Floa
         morph[mask] = _sample_morph(mask.sum().item(), dof, analytically_solvable)
 
     return morph[~mask][:num_robots]
-
-
-# @jaxtyped(typechecker=beartype)
-def get_joint_limits(morph: Float[Tensor, "dof 3"]) -> Float[Tensor, "dof 2"]:
-    """
-    Compute joint limits based on the morphology to avoid self-collisions.
-
-    Args:
-        morph: MDH parameters encoding the robot geometry.
-
-    Returns:
-        Joint limits
-    """
-    joint_limits = torch.zeros(morph.shape[0], 2, device=morph.device)
-
-    extended_morph = torch.cat([torch.zeros_like(morph[:1]), morph])
-    alpha0, a0, d0 = extended_morph[:-2].split(1, dim=-1)
-    alpha1, a1, d1 = extended_morph[1:-1].split(1, dim=-1)
-
-    coordinate_fix = torch.eye(4, device=morph.device, dtype=morph.dtype).repeat(morph.shape[0] - 1, 1, 1)
-    wrist = (a1[:, 0] == 0) & (d1[:, 0] == 0)
-    coordinate_fix[wrist] = transformation_matrix(alpha0, a0, d0, torch.zeros_like(d0))[wrist]
-
-    plane_normal = torch.stack([
-        torch.zeros_like(alpha1),
-        -torch.sin(alpha1),
-        torch.cos(alpha1),
-        torch.zeros_like(alpha1)], dim=2)
-    plane_anchor = torch.stack([
-        a1,
-        -d1 * torch.sin(alpha1),
-        d1 * torch.cos(alpha1),
-        torch.ones_like(alpha1)], dim=2)
-
-    plane_normal = torch.sum(coordinate_fix * plane_normal, dim=-1)[:, :3]
-    plane_anchor = torch.sum(coordinate_fix * plane_anchor, dim=-1)[:, :3]
-
-    stacked_morph = torch.stack([extended_morph[:-2], extended_morph[1:-1], extended_morph[2:]], dim=1)
-    stacked_morph[~wrist, 0, :] = 0.0
-    stacked_poses = forward_kinematics(stacked_morph, torch.zeros(*stacked_morph.shape[:-1], 1, device=morph.device))
-    start, end = get_capsules(stacked_morph, stacked_poses)
-    capsules = end - start
-
-    # Get closest non-zero capsule before joint
-    pre_capsule = capsules[:, 3, :]
-    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 2, :]
-    pre_capsule[mask] = capsules[mask := pre_capsule.norm(dim=-1) < 1e-6, 1, :]
-
-    # Get closest non-zero capsule after joint
-    post_capsule = capsules[:, -2, :]
-    post_capsule[mask] = capsules[mask := post_capsule.norm(dim=-1) < 1e-6, -1, :]
-
-    in_plane = ((pre_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
-    in_plane &= ((post_capsule - plane_anchor) * plane_normal).sum(dim=-1).abs() < 1e-6
-
-    limited = (pre_capsule.norm(dim=-1) > EPS) & (post_capsule.norm(dim=-1) > EPS) & in_plane
-
-    mask = post_capsule.norm(dim=-1) > pre_capsule.norm(dim=-1)
-    arc = torch.arcsin(2 * LINK_RADIUS / post_capsule.norm(dim=-1))
-    arc[mask] = torch.arcsin(2 * LINK_RADIUS / pre_capsule.norm(dim=-1))[mask]
-
-    joint_limits[:-1, 0] = torch.where(limited, 2 * torch.pi - 2 * arc, 2 * torch.pi)  # Range
-    angle = torch.atan2(torch.sum(torch.cross(pre_capsule, post_capsule, dim=1) * plane_normal, dim=1),
-                        torch.sum(pre_capsule * post_capsule, dim=1))
-    # if their angle becomes pi, they collide and are antiparallel
-    angle = torch.atan2(torch.sin(torch.pi - angle), torch.cos(torch.pi - angle))
-    joint_limits[:-1, 1] = torch.where(limited, angle + arc, -torch.pi)  # Offset
-
-    return joint_limits
 
 
 if __name__ == "__main__":
