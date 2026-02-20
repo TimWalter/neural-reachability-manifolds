@@ -16,8 +16,8 @@ SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--set", type=str, default="train", choices=["train", "val", "test"], help="For which set to sample")
-parser.add_argument("--num_robots", type=int, default=10_000, help="number of robots to generate")
-parser.add_argument("--num_samples", type=int, default=100_000, help="number of samples to generate per robot")
+parser.add_argument("--num_robots", type=int, default=10, help="number of robots to generate")
+parser.add_argument("--num_samples", type=int, default=1_000_000, help="number of samples to generate per robot")
 args = parser.parse_args()
 
 assert args.num_samples * args.num_robots % CHUNK_SIZE == 0, f"Only full chunks are supported (chunk size {CHUNK_SIZE})"
@@ -64,7 +64,7 @@ for dof in range(6, 7):
 
     for morph in tqdm(morphs, desc=f"Generating {dof} DOF robots"):
         if args.set == "train":
-            cell_indices, labels = sample_capability_map(morph, args.num_samples, minutes=1, use_ik=False)
+            cell_indices, labels = sample_capability_map(morph, args.num_samples, seconds=60, use_ik=False)
 
             poses = cell_indices.unsqueeze(1)
             labels = labels.long().unsqueeze(1)

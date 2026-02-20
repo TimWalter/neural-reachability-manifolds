@@ -49,7 +49,7 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, minutes: int = 1) -> \
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, seconds: int = 60) -> \
         Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
@@ -58,7 +58,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     Args:
         morph: MDH parameters encoding the robot geometry.
         debug: Whether to return benchmark parameters.
-        minutes: Number of minutes to sample FK.
+        seconds: Number of seconds to sample FK.
 
     Returns:
         Cell indices of reachable cells and optionally benchmark parameters.
@@ -81,7 +81,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     n_batches = 0
     collision_free_samples = 0
     start = datetime.now()
-    while datetime.now() - start < timedelta(minutes=minutes):
+    while datetime.now() - start < timedelta(seconds=seconds):
         _, new_indices = compiled_sample_reachable_poses(morph, joint_limits)
         cuda_indices += [new_indices]
         n_batches += 1
@@ -105,9 +105,9 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
     if debug:
         filled_cells = indices.shape[0]
         total_samples = n_batches * batch_size
-        total_efficiency = filled_cells / total_samples
-        unique_efficiency = filled_cells / collision_free_samples
-        collision_efficiency = collision_free_samples / total_samples
+        total_efficiency = filled_cells / total_samples * 100
+        unique_efficiency = filled_cells / collision_free_samples * 100
+        collision_efficiency = collision_free_samples / total_samples * 100
         return indices, (filled_cells, total_samples, total_efficiency, unique_efficiency, collision_efficiency)
     return indices
 
@@ -160,7 +160,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
                           num_samples: int,
                           return_poses: bool = False,
                           use_ik: bool = False,
-                          minutes: int = 1) -> \
+                          seconds: int = 60) -> \
         tuple[Int64[Tensor, " num_samples"], Bool[Tensor, " num_samples"]] | \
         tuple[Float[Tensor, " {num_samples} 4 4"], Bool[Tensor, " {num_samples}"]]:
     """
@@ -171,7 +171,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
         return_poses: Whether to return poses or only the cell index.
         use_ik: Whether to use inverse kinematics or only forward kinematics.
         num_samples: Number of samples to generate.
-        minutes: Number of minutes to sample FK.
+        seconds: Number of seconds to sample FK.
 
     Returns:
         Labels and indices encoding the discretised capability map
@@ -180,7 +180,7 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
     cell_indices = se3.index(poses)
 
     if not use_ik:
-        r_indices = estimate_capability_map(morph.to("cuda"), minutes=minutes)
+        r_indices = estimate_capability_map(morph.to("cuda"), seconds=seconds)
         labels = torch.isin(cell_indices, r_indices)
     else:
         joints, manipulability = inverse_kinematics(morph.to("cuda"), poses.to("cuda"))
