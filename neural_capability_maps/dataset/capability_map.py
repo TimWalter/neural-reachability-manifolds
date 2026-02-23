@@ -49,8 +49,9 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, seconds: int = 60) -> \
-        Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float]]:
+def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, seconds: int = 60,
+                            batch_size: int = None) -> \
+        Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float], int]:
     """
     Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
     Fill up the discretised cells using FK until convergence. All unfilled cells are assumed to be unreachable.
@@ -59,17 +60,19 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
         morph: MDH parameters encoding the robot geometry.
         debug: Whether to return benchmark parameters.
         seconds: Number of seconds to sample FK.
+        batch_size: Batch size if None is determined automatically.
 
     Returns:
-        Cell indices of reachable cells and optionally benchmark parameters.
+        Cell indices of reachable cells and optionally benchmark parameters and batch size.
     """
     joint_limits = get_joint_limits(morph)
     probe_size = 2048
-    args = [morph.unsqueeze(0).expand(probe_size, -1, -1),
-            joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
-    # To exclude any one-time costs from the batch size calculation
-    sample_reachable_poses(*args)
-    batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
+    if batch_size is None:
+        args = [morph.unsqueeze(0).expand(probe_size, -1, -1),
+                joint_limits.unsqueeze(0).expand(probe_size, -1, -1)]
+        # To exclude any one-time costs from the batch size calculation
+        sample_reachable_poses(*args)
+        batch_size = get_batch_size(morph.device, sample_reachable_poses, probe_size, args, safety=0.5)
     morph = morph.unsqueeze(0).expand(batch_size, -1, -1)
     joint_limits = joint_limits.unsqueeze(0).expand(batch_size, -1, -1)
     if debug:  # Warm-Up for benchmarking
@@ -108,7 +111,7 @@ def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False
         total_efficiency = filled_cells / total_samples * 100
         unique_efficiency = filled_cells / collision_free_samples * 100
         collision_efficiency = collision_free_samples / total_samples * 100
-        return indices, (filled_cells, total_samples, total_efficiency, unique_efficiency, collision_efficiency)
+        return indices, (filled_cells, total_samples, total_efficiency, unique_efficiency, collision_efficiency), batch_size
     return indices
 
 
