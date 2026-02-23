@@ -16,7 +16,7 @@ from neural_capability_maps.dataset.capability_map import estimate_reachable_bal
 from neural_capability_maps.visualisation import get_pose_traces
 from neural_capability_maps.model import Model
 from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
-from neural_capability_maps.dataset.kinematics import analytical_inverse_kinematics, transformation_matrix
+from neural_capability_maps.dataset.kinematics import inverse_kinematics, transformation_matrix
 from neural_capability_maps.visualisation import display_geodesic, display_slice, display_sphere
 
 
@@ -147,7 +147,7 @@ class Logger:
         tangent = se3.log(start, end)
         t = torch.linspace(0, 1, num_samples).view(-1, 1)
         geodesic_poses = se3.exp(start.unsqueeze(0).repeat(num_samples, 1, 1), t * tangent)
-        geodesic_labels = analytical_inverse_kinematics(geodesic_morph.double(), geodesic_poses.double())[1] != -1
+        geodesic_labels = inverse_kinematics(geodesic_morph.double(), geodesic_poses.double())[1] != -1
 
         return (geodesic_morph.unsqueeze(0).expand(num_samples, -1, -1).clone().pin_memory(),
                 se3.to_vector(geodesic_poses).pin_memory(), geodesic_labels)
@@ -172,7 +172,7 @@ class Logger:
 
         slice_poses[:, :3, 3][:, axes_mask] += torch.stack(torch.meshgrid(axes_range, axes_range, indexing='ij'),
                                                            dim=-1).reshape(-1, 2)
-        slice_labels = analytical_inverse_kinematics(slice_morph.double(), slice_poses.double())[1] != -1
+        slice_labels = inverse_kinematics(slice_morph.double(), slice_poses.double())[1] != -1
 
         return slice_morph.unsqueeze(0).expand(10000, -1, -1).clone().pin_memory(), se3.to_vector(
             slice_poses).pin_memory(), slice_labels
@@ -199,7 +199,7 @@ class Logger:
         z = sphere_anchor[:3, 3].norm() * torch.cos(theta_grid)
 
         sphere_poses[:, :3, 3] = centre + torch.stack([x, y, z], dim=-1).reshape(-1, 3)
-        sphere_labels = analytical_inverse_kinematics(sphere_morph.double(), sphere_poses.double())[1] != -1
+        sphere_labels = inverse_kinematics(sphere_morph.double(), sphere_poses.double())[1] != -1
 
         return sphere_morph.unsqueeze(0).expand(10000, -1, -1).clone().pin_memory(), se3.to_vector(
             sphere_poses).pin_memory(), sphere_labels, sphere_anchor[:3, 3].norm()
