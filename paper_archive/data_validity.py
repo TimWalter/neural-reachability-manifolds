@@ -52,7 +52,7 @@ for level in range(1, 5):
             new_r_indices, benchmark = estimate_capability_map(morph.to("cuda"), True, seconds=1)
             r_indices = torch.cat([r_indices, new_r_indices]).unique()
             benchmarks += [torch.tensor(benchmark)]
-            runtime[-1] += 10
+            runtime[-1] += 1
 
             labels = torch.isin(cell_indices, r_indices)
 
