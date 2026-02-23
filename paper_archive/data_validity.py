@@ -24,19 +24,20 @@ from neural_capability_maps.logger import binary_confusion_matrix
 torch.manual_seed(1)
 
 # Table 1
-for level in range(1, 5):
-    se3.set_level(level)
+for level, (interval, n_robots) in enumerate(zip([1, 1, 10, 30], [50, 50, 50, 20])):
+    se3.set_level(level + 1)
     print(f"LEVEL {se3.LEVEL}")
     print(f"Fidelity of the discretisation|\t"
           f"# Cells {so3.N_CELLS * (torch.linalg.norm(r3.cell(torch.arange(0, r3.N_CELLS)), dim=1) < 1.0).sum()}|\t"
           f"Distance between neighbouring cells [{se3.MIN_DISTANCE_BETWEEN_CELLS:.3f}, {se3.MAX_DISTANCE_BETWEEN_CELLS:.3f}]\n")
 
-    morphs = sample_morph(100, 6, False)
+    morphs = sample_morph(n_robots, 6, False)
 
     coverage = []
     runtime = []
     benchmarks = []
     metrics = []
+    batch_size = None
     for morph_idx, morph in enumerate(morphs):
         cell_indices = se3.index(sample_poses_in_reach(100_000, morph))
 
@@ -49,10 +50,11 @@ for level in range(1, 5):
         true_positives = 0.0
         r_indices = torch.empty(0, dtype=torch.int64)
         while true_positives < 95.0 and runtime[-1] < 600:
-            new_r_indices, benchmark = estimate_capability_map(morph.to("cuda"), True, seconds=1)
+            new_r_indices, benchmark, batch_size = estimate_capability_map(morph.to("cuda"), True, seconds=interval,
+                                                                           batch_size=batch_size)
             r_indices = torch.cat([r_indices, new_r_indices]).unique()
             benchmarks += [torch.tensor(benchmark)]
-            runtime[-1] += 1
+            runtime[-1] += interval
 
             labels = torch.isin(cell_indices, r_indices)
 
@@ -77,10 +79,6 @@ for level in range(1, 5):
     mean_benchmark[0] = int(mean_benchmark[0])
     mean_benchmark[1] = int(mean_benchmark[1])
     mean_metrics = metrics.mean(dim=0).tolist()
-    print(mean_coverage)
-    print(mean_runtime)
-    print(mean_benchmark)
-    print(mean_metrics)
     print("MEAN")
     headers = ["Coverage (%)",
                "Runtime (s)",
