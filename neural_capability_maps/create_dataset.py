@@ -53,7 +53,6 @@ with lock:
                       shards=(SHARD_SIZE, sample_dim),
                       compressors=compressor)
 
-morph_file = root[MORPH_FILE_NAME]
 file = root[file_name]
 file_idx = 0
 
@@ -75,6 +74,7 @@ for dof in range(6, 7):
 
         morph = torch.nn.functional.pad(morph, (0, 0, 0, 8 - morph.shape[0]))
         with lock:
+            morph_file = zarr.open(SAFE_FOLDER / MORPH_FILE_NAME, mode="a")
             morph_file.append(morph.unsqueeze(0).numpy(), axis=0)
             morph_id = morph_file.shape[0] - 1
 
