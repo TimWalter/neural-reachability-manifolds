@@ -4,9 +4,9 @@ from typing import Type
 import torch
 from tqdm import tqdm
 
-from neural_capability_maps.logger import Logger
-from neural_capability_maps.model import Model, Torus, OccupancyNetwork, MLP, Shell
-from neural_capability_maps.dataset.loader import ValidationSet
+from nrm.logger import Logger
+from nrm.model import Model, Torus, OccupancyNetwork, MLP, Shell
+from nrm.dataset.loader import ValidationSet
 
 
 def main(model_class: Type[Model],

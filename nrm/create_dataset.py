@@ -7,9 +7,9 @@ import zarr
 import fasteners
 from tqdm import tqdm
 
-import neural_capability_maps.dataset.se3 as se3
-from neural_capability_maps.dataset.morphology import sample_morph
-from neural_capability_maps.dataset.capability_map import sample_capability_map
+import nrm.dataset.se3 as se3
+from nrm.dataset.morphology import sample_morph
+from nrm.dataset.reachability_manifold import sample_reachability_manifold
 
 CHUNK_SIZE = 100_000  # train: ~2.4MB, val:  ~4.4MB
 SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
@@ -73,12 +73,12 @@ buffer = torch.zeros(min(args.num_robots * args.num_samples, SHARD_SIZE), sample
 buffer_id = 0
 for idx, morph in enumerate(tqdm(morphs, desc=f"Generating {args.dof} DOF robots")):
     if args.set == "train":
-        cell_indices, labels = sample_capability_map(morph, args.num_samples, seconds=30, use_ik=False)
+        cell_indices, labels = sample_reachability_manifold(morph, args.num_samples, seconds=30, use_ik=False)
 
         poses = cell_indices.unsqueeze(1)
         labels = labels.long().unsqueeze(1)
     else:
-        poses, labels = sample_capability_map(morph, args.num_samples, return_poses=True, use_ik=True)
+        poses, labels = sample_reachability_manifold(morph, args.num_samples, return_poses=True, use_ik=True)
         poses = se3.to_vector(poses)
         labels = labels.float().unsqueeze(1)
     morph_ids = torch.full_like(labels, idx + morph_offset)

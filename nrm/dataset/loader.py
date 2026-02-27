@@ -9,12 +9,12 @@ from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, jaxtyped, Int, Int64, Bool
 
-import neural_capability_maps.dataset.se3 as se3
+import nrm.dataset.se3 as se3
 
 
 class Dataset:
     """
-    Dataset class to load capability map estimations using Zarr.
+    Dataset class to load reachability manifold estimations using Zarr.
     The hierarchy is Keys -> Chunks -> Batches.
     """
 

@@ -6,10 +6,10 @@ from jaxtyping import jaxtyped, Float, Int, Float64, Bool
 from eaik.IK_Homogeneous import HomogeneousRobot
 from scipy.spatial.transform import Rotation
 
-import neural_capability_maps.dataset.se3 as se3
-from neural_capability_maps.dataset import r3, so3
-from neural_capability_maps.dataset.self_collision import EPS, collision_check
-from neural_capability_maps.dataset.manipulability import geometric_jacobian, yoshikawa_manipulability
+import neural-reacha.dataset.se3 as se3
+from nrm.dataset import r3, so3
+from nrm.dataset.self_collision import EPS, collision_check
+from nrm.dataset.manipulability import geometric_jacobian, yoshikawa_manipulability
 
 
 # @jaxtyped(typechecker=beartype)

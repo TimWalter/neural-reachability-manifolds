@@ -3,8 +3,8 @@ import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float
 
-from neural_capability_maps.model import Model
-from neural_capability_maps.model.occupancy_network import Encoder
+from nrm.model import Model
+from nrm.model.occupancy_network import Encoder
 
 
 class Shell(Model):

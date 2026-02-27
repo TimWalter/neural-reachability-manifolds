@@ -10,9 +10,9 @@ from beartype import beartype
 from scipy.spatial.transform import Rotation
 import seaborn as sns
 
-from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
-from neural_capability_maps.dataset.self_collision import get_capsules, LINK_RADIUS
-from neural_capability_maps.dataset.kinematics import forward_kinematics, transformation_matrix
+from nrm.dataset.reachability_manifold import estimate_reachable_ball
+from nrm.dataset.self_collision import get_capsules, LINK_RADIUS
+from nrm.dataset.kinematics import forward_kinematics, transformation_matrix
 
 def to_ploty_color(color):
     return f"rgb{tuple((255*np.array(color)).astype(int).tolist())}"
@@ -464,22 +464,22 @@ def display_slice(preds, names, morph, return_fig: bool = False):
         width=400 * n_cols
     )
     fig.update_xaxes(
-        title_text=x_label,
+        title_text=x_label if  not return_fig else '',
         showticklabels=False,
         showgrid=False,
         zeroline=False,
-        showline=True,      # Enables the axis line
+        showline= not return_fig,      # Enables the axis line
         linewidth=1,        # Border thickness
         linecolor='rgba(0,0,0,0.25)',  # Border color
         mirror=True,        # Ensures the border appears on all 4 sides
         title_font_size=24
     )
     fig.update_yaxes(
-        title_text=y_label,
+        title_text=y_label if  not return_fig else '',
         showticklabels=False,
         showgrid=False,
         zeroline=False,
-        showline=True,      # Enables the axis line
+        showline=not return_fig,      # Enables the axis line
         linewidth=1,        # Border thickness
         linecolor='rgba(0,0,0,0.25)',  # Border color
         mirror=True,        # Ensures the border appears on all 4 sides
@@ -500,6 +500,30 @@ def display_slice(preds, names, morph, return_fig: bool = False):
     )
 
     if return_fig:
+        # 1. Remove all margins and titles
+        fig.update_layout(
+            margin=dict(l=0, r=0, t=0, b=0),
+            showlegend=False,
+            title_text='',
+        )
+        # 2. Kill the subplot titles (annotations)
+        fig.layout.annotations = []
+
+        # 3. Completely hide axes and their containers
+        fig.update_xaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            title_text=''
+        )
+        fig.update_yaxes(
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            title_text=''
+        )
         return fig
     else:
         fig.show()

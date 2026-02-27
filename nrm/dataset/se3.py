@@ -4,8 +4,8 @@ from torch import Tensor
 from beartype import beartype
 from jaxtyping import jaxtyped, Float, Int64
 
-import neural_capability_maps.dataset.r3 as r3
-import neural_capability_maps.dataset.so3 as so3
+import nrm.dataset.r3 as r3
+import nrm.dataset.so3 as so3
 
 LEVEL, MIN_DISTANCE_BETWEEN_CELLS, MAX_DISTANCE_BETWEEN_CELLS, N_CELLS = [None] * 4
 

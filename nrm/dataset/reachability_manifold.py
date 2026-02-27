@@ -10,13 +10,13 @@ from beartype import beartype
 from jaxtyping import Float, jaxtyped, Bool, Int64
 from tabulate import tabulate
 
-import neural_capability_maps.dataset.r3 as r3
-import neural_capability_maps.dataset.se3 as se3
-from neural_capability_maps.autotune_batch_size import get_batch_size
-from neural_capability_maps.dataset.kinematics import transformation_matrix, forward_kinematics, \
+import nrm.dataset.r3 as r3
+import nrm.dataset.se3 as se3
+from nrm.autotune_batch_size import get_batch_size
+from nrm.dataset.kinematics import transformation_matrix, forward_kinematics, \
     inverse_kinematics
-from neural_capability_maps.dataset.self_collision import collision_check
-from neural_capability_maps.dataset.morphology import get_joint_limits
+from nrm.dataset.self_collision import collision_check
+from nrm.dataset.morphology import get_joint_limits
 
 torch.set_float32_matmul_precision("high")
 
@@ -49,11 +49,11 @@ compiled_sample_reachable_poses = torch.compile(sample_reachable_poses)
 
 
 # @jaxtyped(typechecker=beartype)
-def estimate_capability_map(morph: Float[Tensor, "dofp1 3"], debug: bool = False, seconds: int = 60,
-                            batch_size: int = None) -> \
+def estimate_reachability_manifold(morph: Float[Tensor, "dofp1 3"], debug: bool = False, seconds: int = 60,
+                                   batch_size: int = None) -> \
         Int64[Tensor, " num_samples"] | tuple[Int64[Tensor, " num_samples"], tuple[int, int, float, float, float], int]:
     """
-    Estimat the capability map using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
+    Estimat the reachability manifold using only forward kinematics, a discretisation of SE(3) and the closed world assumption.
     Fill up the discretised cells using FK until convergence. All unfilled cells are assumed to be unreachable.
 
     Args:
@@ -159,11 +159,11 @@ def sample_poses_in_reach(num_samples: int, morph: Float[Tensor, "dof 3"]) -> Fl
 
 
 # @jaxtyped(typechecker=beartype)
-def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
-                          num_samples: int,
-                          return_poses: bool = False,
-                          use_ik: bool = False,
-                          seconds: int = 60) -> \
+def sample_reachability_manifold(morph: Float[Tensor, "dofp1 3"],
+                                 num_samples: int,
+                                 return_poses: bool = False,
+                                 use_ik: bool = False,
+                                 seconds: int = 60) -> \
         tuple[Int64[Tensor, " num_samples"], Bool[Tensor, " num_samples"]] | \
         tuple[Float[Tensor, " {num_samples} 4 4"], Bool[Tensor, " {num_samples}"]]:
     """
@@ -177,13 +177,13 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
         seconds: Number of seconds to sample FK.
 
     Returns:
-        Labels and indices encoding the discretised capability map
+        Labels and indices encoding the discretised reachability manifold
     """
     poses = sample_poses_in_reach(num_samples, morph)
     cell_indices = se3.index(poses)
 
     if not use_ik:
-        r_indices = estimate_capability_map(morph.to("cuda"), seconds=seconds)
+        r_indices = estimate_reachability_manifold(morph.to("cuda"), seconds=seconds)
         labels = torch.isin(cell_indices, r_indices)
     else:
         joints, manipulability = inverse_kinematics(morph.to("cuda"), poses.to("cuda"))
@@ -193,14 +193,14 @@ def sample_capability_map(morph: Float[Tensor, "dofp1 3"],
 
 
 if __name__ == "__main__":
-    from neural_capability_maps.dataset.morphology import sample_morph
+    from nrm.dataset.morphology import sample_morph
 
     torch.manual_seed(1)
     morphs = sample_morph(10, 6, True)
     benchmarks = []
     for morph in morphs:
         morph = morph.to("cuda")
-        _, benchmark = estimate_capability_map(morph, True)
+        _, benchmark = estimate_reachability_manifold(morph, True)
         benchmarks += [torch.tensor(benchmark)]
 
     mean_benchmark = torch.stack(benchmarks).mean(dim=0, keepdim=True).tolist()

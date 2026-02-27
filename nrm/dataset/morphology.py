@@ -3,9 +3,9 @@ from torch import Tensor
 from beartype import beartype
 from jaxtyping import Float, Int, Bool, jaxtyped
 
-from neural_capability_maps.dataset.kinematics import transformation_matrix, forward_kinematics
-from neural_capability_maps.dataset.self_collision import EPS, LINK_RADIUS, get_capsules, collision_check
-from neural_capability_maps.dataset.manipulability import geometric_jacobian, yoshikawa_manipulability
+from nrm.dataset.kinematics import transformation_matrix, forward_kinematics
+from nrm.dataset.self_collision import EPS, LINK_RADIUS, get_capsules, collision_check
+from nrm.dataset.manipulability import geometric_jacobian, yoshikawa_manipulability
 
 
 # @jaxtyped(typechecker=beartype)

@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float
 
-from neural_capability_maps.model import Model
+from nrm.model import Model
 
 
 class MLP(Model):

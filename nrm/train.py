@@ -5,9 +5,9 @@ import torch
 import optuna
 from tqdm import tqdm
 
-from neural_capability_maps.logger import Logger
-from neural_capability_maps.model import Model, Torus, OccupancyNetwork, MLP, Shell
-from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
+from nrm.logger import Logger
+from nrm.model import Model, Torus, OccupancyNetwork, MLP, Shell
+from nrm.dataset.loader import TrainingSet, ValidationSet
 
 
 def main(model_class: Type[Model],
@@ -17,7 +17,7 @@ def main(model_class: Type[Model],
          early_stopping: int,
          lr: float,
          trial: optuna.Trial = None):
-    device = torch.device("cuda")
+    device = torch.device("cuda:1")
 
     training_set = TrainingSet(batch_size, True)
     validation_set = ValidationSet(batch_size, False)

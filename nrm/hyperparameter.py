@@ -2,7 +2,7 @@ import argparse
 import optuna
 
 from train import main
-from neural_capability_maps.model import Model, Torus, OccupancyNetwork, MLP, Shell
+from nrm.model import Model, Torus, OccupancyNetwork, MLP, Shell
 
 
 def objective(trial):

@@ -11,13 +11,13 @@ import plotly.graph_objects as go
 from jaxtyping import Float, Bool
 from torch import Tensor
 
-import neural_capability_maps.dataset.se3 as se3
-from neural_capability_maps.dataset.capability_map import estimate_reachable_ball
-from neural_capability_maps.visualisation import get_pose_traces
-from neural_capability_maps.model import Model
-from neural_capability_maps.dataset.loader import TrainingSet, ValidationSet
-from neural_capability_maps.dataset.kinematics import inverse_kinematics, transformation_matrix
-from neural_capability_maps.visualisation import display_geodesic, display_slice, display_sphere
+import nrm.dataset.se3 as se3
+from nrm.dataset.reachability_manifold import estimate_reachable_ball
+from nrm.visualisation import get_pose_traces
+from nrm.model import Model
+from nrm.dataset.loader import TrainingSet, ValidationSet
+from nrm.dataset.kinematics import inverse_kinematics, transformation_matrix
+from nrm.visualisation import display_geodesic, display_slice, display_sphere
 
 
 class Logger:
@@ -83,7 +83,7 @@ class Logger:
 
     def setup_wandb(self, metadata: dict, trial: optuna.Trial) -> wandb.Run:
         # wandb.login(key="")
-        run = wandb.init(project="Capability Maps",
+        run = wandb.init(project="Neural Reachability Manifolds",
                          config=metadata,
                          group="MLP",
                          tags=[metadata["model_class"]],
