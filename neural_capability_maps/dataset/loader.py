@@ -1,3 +1,4 @@
+import re
 import random
 import bisect
 from pathlib import Path
@@ -31,7 +32,13 @@ class Dataset:
         self.shuffle = shuffle
         self.root = zarr.open(Path(__file__).parent.parent.parent / 'data' / kind, mode="r")
 
-        self.keys = sorted([k for k in self.root.array_keys() if k.isdigit()], key=int)
+        file_indices = sorted([
+            int(match.group(1))
+            for k in self.root.array_keys()
+            if (match := re.search(r'^(\d+)_samples$', k))
+        ])
+        self.morphologies = torch.cat([torch.from_numpy(self.root[f"{idx}_morphologies"][:]) for idx in file_indices], dim=0)
+        self.keys = [f"{idx}_samples" for idx in file_indices]
 
         self.chunk_size = self.root[self.keys[0]].chunks[0]
         self.chunk_offsets = [0]
@@ -43,8 +50,6 @@ class Dataset:
             self.batch_offsets += [self.batch_offsets[-1] + num_samples // self.batch_size]
         self.num_chunks = self.chunk_offsets[-1]
         self.num_batches = self.batch_offsets[-1]
-
-        self.morphologies = torch.from_numpy(self.root["morphologies"][:])
 
         self.current_chunk_idx = None
         self.current_chunk = None

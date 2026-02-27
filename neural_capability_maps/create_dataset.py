@@ -16,7 +16,8 @@ SHARD_SIZE = CHUNK_SIZE * 1000  # train: ~2.4GB, val:  ~4.4GB
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--set", type=str, default="train", choices=["train", "val", "test"], help="For which set to sample")
-parser.add_argument("--num_robots", type=int, default=10, help="number of robots to generate")
+parser.add_argument("--dof", type=int, default=6, choices=[1, 2, 3, 4, 5, 6, 7], help="number of degrees of freedom")
+parser.add_argument("--num_robots", type=int, default=1000, help="number of robots to generate")
 parser.add_argument("--num_samples", type=int, default=1_000_000, help="number of samples to generate per robot")
 args = parser.parse_args()
 
@@ -24,7 +25,6 @@ assert args.num_samples * args.num_robots % CHUNK_SIZE == 0, f"Only full chunks 
 assert SHARD_SIZE / args.num_samples == SHARD_SIZE // args.num_samples, f"One robot must belong to one shard (shard size {SHARD_SIZE})"
 
 SAFE_FOLDER = Path(__file__).parent.parent / 'data' / args.set
-MORPH_FILE_NAME = "morphologies"
 lock = fasteners.InterProcessLock(SAFE_FOLDER.parent / f'{args.set}_lock.file')
 compressor = zarr.codecs.BloscCodec(cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
 
@@ -33,60 +33,63 @@ with lock:
 root = zarr.open(SAFE_FOLDER, mode="a")
 
 with lock:
-    if MORPH_FILE_NAME not in root:
-        root.create_array(
-            MORPH_FILE_NAME,
-            shape=(0, 8, 3),
-            dtype="float32",
-            compressors=compressor,
-            overwrite=False,
-        )
-    existing = [int(re.findall(r'\d+', k)[-1]) for k in root.array_keys() if re.findall(r'\d+', k)]
-    file_name = str((max(existing) + 1) if existing else 0)
-    print(f"Working in file {file_name}")
+    file_indices = [
+        int(match.group(1))
+        for k in root.array_keys()
+        if (match := re.search(r'^(\d+)_samples$', k))
+    ]
+    file_idx = (max(file_indices) + 1) if file_indices else 0
+    morph_offset = sum([root[f"{idx}_morphologies"].shape[0] for idx in file_indices])
+
+    print(f"Working in file {file_idx} with morph offset {morph_offset}")
+
+    morph_filename = str(file_idx) + "_morphologies"
+    sample_filename = str(file_idx) + "_samples"
+
+    root.create_array(
+        morph_filename,
+        shape=(args.num_robots, 8, 3),
+        dtype="float32",
+        chunks=(args.num_robots, 8, 3),
+        compressors=compressor,
+        overwrite=False,
+    )
     sample_type = "int64" if args.set == "train" else "float32"
     sample_dim = 3 if args.set == "train" else 11
-    root.create_array(file_name,
+    root.create_array(sample_filename,
                       shape=(args.num_robots * args.num_samples, sample_dim),
                       dtype=sample_type,
                       chunks=(CHUNK_SIZE, sample_dim),
                       shards=(SHARD_SIZE, sample_dim),
                       compressors=compressor)
 
-file = root[file_name]
-file_idx = 0
+morphs = sample_morph(args.num_robots, args.dof, args.set != "train")
+root[morph_filename][0:] = torch.nn.functional.pad(morphs, (0, 0, 0, 8 - morphs.shape[1])).cpu().numpy()
 
-sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
+file = root[sample_filename]
+file_id = 0
+buffer = torch.zeros(min(args.num_robots * args.num_samples, SHARD_SIZE), sample_dim,
+                     dtype=torch.int64 if args.set == "train" else torch.float32)
+buffer_id = 0
+for idx, morph in enumerate(tqdm(morphs, desc=f"Generating {args.dof} DOF robots")):
+    if args.set == "train":
+        cell_indices, labels = sample_capability_map(morph, args.num_samples, seconds=30, use_ik=False)
 
-for dof in range(6, 7):
-    morphs = sample_morph(args.num_robots, dof, args.set != "train")
+        poses = cell_indices.unsqueeze(1)
+        labels = labels.long().unsqueeze(1)
+    else:
+        poses, labels = sample_capability_map(morph, args.num_samples, return_poses=True, use_ik=True)
+        poses = se3.to_vector(poses)
+        labels = labels.float().unsqueeze(1)
+    morph_ids = torch.full_like(labels, idx + morph_offset)
+    samples = torch.cat([morph_ids, poses, labels], dim=1)
 
-    for morph in tqdm(morphs, desc=f"Generating {dof} DOF robots"):
-        if args.set == "train":
-            cell_indices, labels = sample_capability_map(morph, args.num_samples, seconds=60, use_ik=False)
+    buffer[buffer_id: buffer_id + samples.shape[0]] = samples
+    buffer_id += samples.shape[0]
 
-            poses = cell_indices.unsqueeze(1)
-            labels = labels.long().unsqueeze(1)
-        else:
-            poses, labels = sample_capability_map(morph, args.num_samples, return_poses=True, use_ik=True)
-            poses = se3.to_vector(poses)
-            labels = labels.float().unsqueeze(1)
+    if buffer_id * args.num_samples == buffer.shape[0] or idx == morphs.shape[0] - 1:
+        buffer = buffer[torch.randperm(buffer.shape[0])]
 
-        morph = torch.nn.functional.pad(morph, (0, 0, 0, 8 - morph.shape[0]))
-        with lock:
-            morph_file = zarr.open(SAFE_FOLDER / MORPH_FILE_NAME, mode="a")
-            morph_file.append(morph.unsqueeze(0).numpy(), axis=0)
-            morph_id = morph_file.shape[0] - 1
-
-        sample_buffer = torch.cat([sample_buffer, torch.cat([torch.full_like(labels, morph_id), poses, labels], dim=1)])
-
-        if sample_buffer.shape[0] == SHARD_SIZE:
-            sample_buffer = sample_buffer[torch.randperm(sample_buffer.shape[0])]
-
-            file[file_idx: file_idx + sample_buffer.shape[0]] = sample_buffer.cpu().numpy()
-            file_idx += sample_buffer.shape[0]
-
-            sample_buffer = torch.empty(0, sample_dim, dtype=torch.int64 if args.set == "train" else torch.float32)
-
-sample_buffer = sample_buffer[torch.randperm(sample_buffer.shape[0])]
-file[file_idx:file_idx + sample_buffer.shape[0]] = sample_buffer.cpu().numpy()
+        file[file_idx: file_idx + buffer.shape[0]] = buffer.cpu().numpy()
+        file_idx += buffer.shape[0]
+        buffer_id = 0
